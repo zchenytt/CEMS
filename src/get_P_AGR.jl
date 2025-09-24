@@ -8,6 +8,7 @@ import Dates.now as now
 
 # solve the minimum P_AGR problem using DW_CG + primal Recover
 # scalable: Yes
+# correctness: Yes---switch VALIDITY_CHECK_MODE and compare
 # quality of recovered primal solution: High
 # TODO: add cooling power supply `q`
 
@@ -58,7 +59,8 @@ function get_pair_and_self_rng(J)
     d = J÷4
     local Rng1, Rng2 = 1:d, d+1:J
 end;
-
+function prev(t, d, T) return (n = t-d; n<1 ? T+n : n) end;
+function pc_P_AC(O, OH, CND, Q_I, COP) return ceil(Int, ((maximum(O) - OH)CND + maximum(Q_I)) / COP) end;
 function get_E_ES(rng)::NamedTuple
     M = rand(rng) # Max E
     i = rand(0:M) # initial SOC _is_ this value
@@ -70,15 +72,13 @@ function add_ES_module!(model, P_ES, E_ES)
         c = JuMP.@variable(model, [1:T], lower_bound = 0),
         d = JuMP.@variable(model, [1:T], lower_bound = 0)
     ); bES = JuMP.@variable(model, [1:T], Bin)
-        JuMP.@constraint(model, pES.c ≤ (bES)P_ES.c )
-        JuMP.@constraint(model, pES.d ≤ map(x -> 1-x, bES)P_ES.d )
+        JuMP.@constraint(model, pES.c ≤ (bES)P_ES.c)
+        JuMP.@constraint(model, pES.d ≤ (1 .- bES)P_ES.d)
     eES = JuMP.@variable(model, [t=1:T], lower_bound = t<T ? 0 : E_ES.e, upper_bound = E_ES.M)
     JuMP.@constraint(model, [t=1:T], pES.c[t]*.95 - pES.d[t]/.95 == eES[t]-(t>1 ? eES[t-1] : E_ES.i))
     return pES, bES, eES
     # NamedTuple(k => ı.(v) for (k, v) = pairs(pES))
 end;
-function prev(t, d, T) return (n = t-d; n<1 ? T+n : n) end;
-function pc_P_AC(O, OH, CND, Q_I, COP) return ceil(Int, ((maximum(O) - OH)CND + maximum(Q_I)) / COP) end;
 function gen_ac_data()::Tuple
     CND   = .5rand(1:7)   # thermal conductance of the building wall
     INR   = rand(6:20)    # thermal inertia of the building
@@ -120,7 +120,7 @@ function pc_self_P_BUS(D, U, P_EV, E_EV, O, CND, INR, COP, Q_I, OH, OΔ, P_AC)::
     JuMP.@objective(model, Min, pBus)
     JuMP.optimize!(model)
     JuMP.termination_status(model) == JuMP.OPTIMAL || error("$(JuMP.termination_status(model))")
-    val = ı(pBus)
+    val = JuMP.objective_value(model)
     val > 0 || error("The self household has P_BUS = $val")
     local P_BUS = ceil(Int, val)
 end;
@@ -157,7 +157,7 @@ function add_circuit_breaker_pair_module!(model, P_BUS_1, P_BUS_2,
     JuMP.@constraint(model, pBus_2 ≥ pEV_2 + pU_2 + pAC_2 + D_2)
     return pBus_1, pBus_2
 end;
-
+###############################################################
 function get_a_paired_block(O)::NamedTuple
     model = get_honest_model() # for a block who has a lender and a borrower house
     # 6 lines
@@ -204,37 +204,9 @@ function get_a_paired_block(O)::NamedTuple
     temp_float64 = ı(temp_x)
     temp_float64 > -1e-5 || error("pBus_1 has value $temp_float64")
     P_BUS_1 = max(1, ceil(Int, temp_float64))
-    local d = (
-        P_BUS_1 = P_BUS_1,
-        P_BUS_2 = P_BUS_2,
-        G = G,
-        P_ES = P_ES,
-        E_ES = E_ES,
-        D_1 = D_1,
-        D_2 = D_2,
-        U_1 = U_1,
-        U_2 = U_2,
-        P_EV_1 = P_EV_1,
-        P_EV_2 = P_EV_2,
-        E_EV_1 = E_EV_1,
-        E_EV_2 = E_EV_2,
-        CND_1  = CND_1,  
-        CND_2  = CND_2,  
-        INR_1  = INR_1,  
-        INR_2  = INR_2,  
-        COP_1  = COP_1,  
-        COP_2  = COP_2,  
-        Q_I_1  = Q_I_1,  
-        Q_I_2  = Q_I_2,
-        Q_BUS_1 = Q_BUS_1,
-        Q_BUS_2 = Q_BUS_2,
-        OH_1   = OH_1,   
-        OH_2   = OH_2,   
-        OΔ_1   = OΔ_1,   
-        OΔ_2   = OΔ_2,   
-        P_AC_1 = P_AC_1, 
-        P_AC_2 = P_AC_2 
-    )
+    (;P_BUS_1, P_BUS_2, G, P_ES, E_ES, D_1, D_2, U_1, U_2, P_EV_1, P_EV_2,
+    E_EV_1, E_EV_2, CND_1, CND_2, INR_1, INR_2, COP_1, COP_2, Q_I_1, Q_I_2,
+    Q_BUS_1, Q_BUS_2, OH_1, OH_2, OΔ_1, OΔ_2, P_AC_1, P_AC_2)
 end; 
 function get_a_self_block(O)::NamedTuple
     D = rand(0:5, T) # base demand
@@ -242,21 +214,7 @@ function get_a_self_block(O)::NamedTuple
     P_EV, E_EV = (m = rand((1., 1.5)), M = rand(3:7)), rand(10:39)
     CND, INR, COP, Q_I, Q_BUS, OH, OΔ, P_AC = gen_ac_data()
     P_BUS = pc_self_P_BUS(D, U, P_EV, E_EV, O, CND, INR, COP, Q_I, OH, OΔ, P_AC)
-    local d = (
-        P_BUS = P_BUS,      
-        D     = D    ,   
-        U     = U    ,   
-        P_EV  = P_EV ,      
-        E_EV  = E_EV ,      
-        CND   = CND  ,   
-        INR   = INR  ,   
-        COP   = COP  ,   
-        Q_I   = Q_I  ,  
-        Q_BUS = Q_BUS, 
-        OH    = OH   ,      
-        OΔ    = OΔ   ,      
-        P_AC  = P_AC       
-    )
+    (;P_BUS, D, U, P_EV, E_EV, CND, INR, COP, Q_I, Q_BUS, OH, OΔ, P_AC)
 end;
 function add_a_paired_block!(model, d::NamedTuple)::NamedTuple
     # lender house
@@ -272,44 +230,14 @@ function add_a_paired_block!(model, d::NamedTuple)::NamedTuple
     pBus_1, pBus_2 = add_circuit_breaker_pair_module!(model, d.P_BUS_1, d.P_BUS_2,
         pES, d.G, pLent, pEV_1, pU_1, pAC_1, d.D_1,
         pEV_2, pU_2, pAC_2, d.D_2)
-    local x = (
-        pBus_1 = pBus_1, # dependent variable
-        pBus_2 = pBus_2, # dependent variable
-        q_1 = q_1,
-        q_2 = q_2,
-        o_1 = o_1,
-        o_2 = o_2,
-        bLent = bLent,
-        pLent = pLent, # bLent can be inferred from pLent
-        bEV_1 = bEV_1,
-        bEV_2 = bEV_2,
-        pEV_1 = pEV_1,
-        pEV_2 = pEV_2,
-        pES = pES,
-        bES = bES,
-        bU_1 = bU_1,
-        bU_2 = bU_2,
-        pU_1 = pU_1,
-        pU_2 = pU_2,
-        pAC_1 = pAC_1,
-        pAC_2 = pAC_2
-    )
-end; 
+    (;pBus_1, pBus_2, bLent, bES, bEV_1, bEV_2, bU_1, bU_2, q_1, q_2)
+end;
 function add_a_self_block!(model, d::NamedTuple)::NamedTuple
     bU, pU = add_U_module!(model, d.U)
     bEV, pEV = add_self_EV_module!(model, d.P_EV, d.E_EV)
     o, q, pAC = add_AC_module!(model, O, d.CND, d.INR, d.COP, d.Q_I, 0, d.OH, d.OΔ, d.P_AC) # Q_BUS = 0
     pBus = add_self_circuit_breaker_module!(model, d.P_BUS, d.D, pU, pEV, pAC)
-    local x = (
-        pBus = pBus, # dependent variable
-        q = q,
-        o = o,
-        bEV = bEV,
-        pEV = pEV, # bEV can be inferred from pEV
-        bU = bU,
-        pU = pU,
-        pAC = pAC
-    )
+    (;pBus, bEV, bU, q)
 end;
 # function set_qˈs_ub!(D, X)
 #     for j = Rng1
@@ -322,36 +250,30 @@ end;
 # end;
 # function get_Q_A(model) return map(x -> rand(0.25:0.05:0.95)x, ı.(model[:qA])) end;
 # function get_E_Q(model) return round(Int, rand(0.25:0.05:0.85)sum(ı.(model[:qA]))) end;
-function fill_inn_D_X!(inn, D, X)
-    for (ȷ, g, a) = zip((Rng1, Rng2), (get_a_paired_block, get_a_self_block), (add_a_paired_block!, add_a_self_block!))
-        for j = ȷ
-            local d = g(O)
-            push!(D, d)
-            push!(X, a(inn[j], d))
-            print("\rj = $j")
-        end
-    end
-end;
+
 ################################################################################
 
 # DW decomposition
 
 ################################################################################
 function initialize_out(an_UB)
-    model = get_honest_model()
+    model = JuMP.direct_model(Gurobi.Optimizer()) # CTPLN LP
+    JuMP.set_silent(model)
+    JuMP.set_attribute(model, "Threads", 1)
     JuMP.@variable(model, β[1:T] ≥ 0)
-    JuMP.@constraint(model, sum(β) == 1)
-    JuMP.@variable(model, θ[1:J]) # This is a concise formulation---the cut is info-intensive
+    JuMP.@constraint(model, sum(β) == 1) # ⚠️ special
+    JuMP.@variable(model, θ[1:J])
     JuMP.@expression(model, out_obj_tbMax, sum(θ))
     JuMP.@objective(model, Max, out_obj_tbMax)
     JuMP.@constraint(model, out_obj_tbMax ≤ an_UB)
     return model, θ, β
 end;
 function bilin_expr(j, iˈı::Function, β) # pivot
-    pBus = j ∈ Rng1 ? X[j].pBus_1 + X[j].pBus_2 : X[j].pBus
-    JuMP.@expression(model, β ⋅ iˈı.(pBus))
+    JuMP.@expression(model, sum(iˈı(p)b for (b, p) = zip(β,
+        j ∈ Rng1 ? X[j].pBus_1 + X[j].pBus_2 : X[j].pBus
+    )))
 end;
-function subproblemˈs_duty(j, snap, inbox) # the fussy version
+function subproblemˈs_duty(j, snap, inbox)
     t = let β = snap.β, mj = inn[j]
         JuMP.@objective(mj, Min, bilin_expr(j, identity, β))
         JuMP.optimize!(mj) # 🕰️
@@ -373,17 +295,13 @@ function subproblemˈs_duty(j, snap, inbox) # the fussy version
                     bEV_2 = get_Bool_value(x.bEV_2),
                     bU_1 = get_Bool_value(x.bU_1),
                     bU_2 = get_Bool_value(x.bU_2),
-                    pBus = mapreduce(v -> map(ı, v), +, (x.pBus_1, x.pBus_2)),
-                    pES = (
-                        c = ı.(x.pES.c),
-                        d = ı.(x.pES.d)
-                    ) # Need to check CS condition
+                    pBus = mapreduce(v -> map(ı, v), +, (x.pBus_1, x.pBus_2))
                 )
             else
                 (
                     bEV = get_Bool_value(x.bEV),
                     bU = get_Bool_value(x.bU),
-                    pBus = ı.(x.pBus)
+                    pBus = map(ı, x.pBus)
                 )
             end
         end
@@ -412,13 +330,13 @@ function wait_until_all_started(taskvec)
         progress && continue
         yield()
     end
-end
+end;
 function shot!(timestamp)
     JuMP.optimize!(model)
     JuMP.termination_status(model) == JuMP.OPTIMAL || error("$(JuMP.termination_status(model))")
     snap = (t = timestamp += 1, θ = ı.(θ), β = ı.(β), ub = JuMP.objective_bound(model))
     timestamp, snap
-end
+end;
 function warm_up()
     inbox, js_remains = Function[], Set(1:J)
     _, snap = shot!(0)
@@ -438,7 +356,7 @@ function warm_up()
             isempty(js_remains) && return
         end
     end
-end
+end;
 function masterˈs_loop(snap, timestamp, inbox)
     v, i = fill(0, J), 0
     while true
@@ -468,25 +386,43 @@ function masterˈs_loop(snap, timestamp, inbox)
             return
         end
     end
-end
+end;
 function masterˈs_algorithm()
     timestamp, inbox = -1, Function[]
     timestamp, snap = shot!(timestamp)
     sub_tasks = [Threads.@spawn subproblemˈs_duty(j, snap, inbox) for j = 1:J]
     wait_until_all_started(sub_tasks)
     wait(Threads.@spawn masterˈs_loop(snap, timestamp, inbox))
-end
-# function thin(x) # Maybe we don't need this since we had vio > COT threshold
-#     v = empty(x)
-#     while true
-#         isempty(x) && return v
-#         i = pop!(x)
-#         i ∈ v || push!(v, i)
-#     end
-# end; thin!(VCG) = for (j, e) = enumerate(VCG) VCG[j] = thin(e) end;
+end;
+function fill_model_D_X!(v::Vector, D, X)
+    for (ȷ, g, a) = zip((Rng1, Rng2), (get_a_paired_block, get_a_self_block), (add_a_paired_block!, add_a_self_block!))
+        for j = ȷ
+            local d = g(O)
+            push!(D, d)
+            push!(X, a(v[j], d))
+            print("\rj = $j")
+        end
+    end
+end;
+function fill_model_D_X!(monolithic_model, D, X)
+    for (ȷ, g, a) = zip((Rng1, Rng2), (get_a_paired_block, get_a_self_block), (add_a_paired_block!, add_a_self_block!))
+        for j = ȷ
+            local d = g(O)
+            push!(D, d)
+            push!(X, a(monolithic_model, d))
+            print("\rj = $j")
+        end
+    end
+end;
+
+################################################################################
+
+# Main program
+
+################################################################################
 
 Random.seed!(4573) # This is a tough seed at K = 1
-Random.seed!(6845689679);
+Random.seed!(2353101234891);
 
 const K = 1;
 const LOGIS = 255;
@@ -498,28 +434,53 @@ const inbox_lock = Threads.ReentrantLock();
 const (Rng1, Rng2) = get_pair_and_self_rng(J);
 const (_, O) = get_C_and_O(); # price and Celsius vector
 const D, X = NamedTuple[], NamedTuple[];
-const inn = [get_honest_model() for j = 1:J];
 
+const inn = [get_honest_model() for j = 1:J];
 const VCG = [NamedTuple[] for _ = 1:J]; # collect the Vertices found in the CG algorithm
-const model, θ, β = initialize_out(30J);
-fill_inn_D_X!(inn, D, X)
+const model, θ, β = initialize_out(30J); # ⚠️⚠️⚠️
+
+VALIDITY_CHECK_MODE::Int = 0
+if VALIDITY_CHECK_MODE == 1
+    model = JuMP.Model(() -> Gurobi.Optimizer(GRB_ENV))
+    fill_model_D_X!(model, D, X)
+    e = JuMP.@variable(model);
+    JuMP.@expression(model, pA, sum(X[j].pBus_1 + X[j].pBus_2 for j = Rng1) + sum(X[j].pBus for j = Rng2));
+    JuMP.@constraint(model, pA .≤ e);
+    JuMP.@objective(model, Min, e);
+    JuMP.optimize!(model);
+else # DW algorithm
+    fill_model_D_X!(inn, D, X)
+end
+
+############################################################
+
+# Validity check using small-scale comparative tests Ends.
+# start DW-CG
+
+############################################################
 
 warm_up()
 masterˈs_algorithm()
-_, snap = shot!(0) # snap.ub to get Lagrangian bound
+_, snap = shot!(0) # snap.ub stores the Lagrangian bound
+
+############################################################
+
+# Recover a primal-side (Int) feasible solution
+
+############################################################
 
 macro get_int_decision(model, expr) return esc(quote
     let e = JuMP.@expression($model, $expr)
-        local a = ndims(e) > 0 ? map(_ -> JuMP.@variable($model, integer = true), e) : JuMP.@variable($model, integer = true)
+        local a = map(_ -> JuMP.@variable($model, integer = true), e)
         JuMP.@constraint($model, a == e)
         a
     end
-end) end
-function get_prob_decision(model, v)
+end) end;
+function get_prob_decision(model, v::Vector{NamedTuple})
     local x = map(_ -> JuMP.@variable(model, lower_bound = 0), v)
     JuMP.@constraint(model, sum(x) == 1)
     x
-end
+end;
 function build_prm!(model)
     JuMP.unset_silent(model)
     l = map(v -> get_prob_decision(model, v), VCG)
@@ -537,12 +498,12 @@ function build_prm!(model)
         pBus = JuMP.@expression(model, sum((t.pBus)l for (l, t) = zip(l[j], VCG[j])))
     ) for j = 1:J]
     JuMP.@variable(model, e)
-    JuMP.@constraint(model, e .≥ mapreduce(t -> t.pBus, +, Y))
+    JuMP.@constraint(model, e .≥ sum(t.pBus for t = Y))
     JuMP.@objective(model, Min, e)
     return Y
 end;
 const prm = JuMP.Model(() -> Gurobi.Optimizer(GRB_ENV)); 
-Y = build_prm!(prm);
+const Y = build_prm!(prm);
 JuMP.optimize!(prm)
-JuMP.termination_status(prm) == JuMP.OPTIMAL || error("fails")
-JuMP.objective_value(prm) # The P_AGR should be higher than this value
+JuMP.termination_status(prm) == JuMP.OPTIMAL || error("fails");
+JuMP.objective_value(prm) # The P_AGR set should be higher than this value
