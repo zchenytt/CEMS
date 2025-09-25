@@ -1,13 +1,20 @@
 import JuMP, Gurobi
 import JuMP.value as ı
 import LinearAlgebra.⋅ as ⋅
-import LinearAlgebra.norm as norm
 import Random
-
-# test case generator
-# change Random seed to distinguish
-# increase J to scale up
-
+import Dates.now as now
+macro get_int_decision(model, expr) return esc(quote
+    let e = JuMP.@expression($model, $expr)
+        local a = map(_ -> JuMP.@variable($model, integer = true), e)
+        JuMP.@constraint($model, a == e)
+        a
+    end
+end) end;
+function get_Bool_value(x)
+    f = z -> round(Bool, ı(z))
+    ndims(x) == 0 && return f(x)
+    map(f, x)
+end;
 function get_C_and_O()
     C = [
         # Case 1: Flat midday, strong evening peak
@@ -35,23 +42,39 @@ function get_C_and_O()
     ]
     return C[rand(1:5)], O[rand(1:5)]
 end;
-function assert_is_approxly_solved(model)
-    local (t, p) = (JuMP.termination_status(model), JuMP.primal_status(model))
-    t ∈ [JuMP.TIME_LIMIT, JuMP.OPTIMAL, JuMP.SOLUTION_LIMIT] || error("terminate with $t")
-    p == JuMP.FEASIBLE_POINT && return nothing
-    if p == JuMP.UNKNOWN_RESULT_STATUS
-        @warn "terminate with primal UNKNOWN_RESULT_STATUS"
-        return nothing
-    end
-    error("terminate with primal_status = $p")
+function get_honest_model(new = false)
+    m = new ? JuMP.Model(Gurobi.Optimizer) : JuMP.Model(() -> Gurobi.Optimizer(GRB_ENV))
+    JuMP.set_silent(m)
+    JuMP.set_attribute(m, "MIPGap", 0)
+    JuMP.set_attribute(m, "MIPGapAbs", 0)
+    JuMP.set_attribute(m, "Threads", 1) # also for the master LP, since we apply a FULLY async algorithm! 
+    m
 end;
-function get_pair_and_self_rng(J)
+function get_pair_and_self_Rng(J)
     d = J÷4
-    local (Rng1, Rng2) = (1:d, d+1:J)
+    local Rng1, Rng2 = 1:d, d+1:J
 end;
 function prev(t, d, T) return (n = t-d; n<1 ? T+n : n) end;
-function get_P_AC(O, OH, CND, Q_I, COP) return ceil(Int, ((maximum(O) - OH)CND + maximum(Q_I)) / COP) end;
-function gen_ac_data()
+function pc_P_AC(O, OH, CND, Q_I, COP) return ceil(Int, ((maximum(O) - OH)CND + maximum(Q_I)) / COP) end;
+function get_E_ES(Rng)::NamedTuple
+    M = rand(Rng) # Max E
+    i = rand(0:M) # initial SOC _is_ this value
+    e = rand(0:min(M, 21)) # ending SOC should ≥ this value
+    local E_ES = (i = i, M = M, e = e) # assume lb = 0 w.l.o.g.
+end;
+function add_ES_module!(model, P_ES, E_ES)
+    pES = ( # eES is dependent variable
+        c = JuMP.@variable(model, [1:T], lower_bound = 0),
+        d = JuMP.@variable(model, [1:T], lower_bound = 0)
+    ); bES = JuMP.@variable(model, [1:T], Bin)
+        JuMP.@constraint(model, pES.c ≤ (bES)P_ES.c)
+        JuMP.@constraint(model, pES.d ≤ (1 .- bES)P_ES.d)
+    eES = JuMP.@variable(model, [t=1:T], lower_bound = t<T ? 0 : E_ES.e, upper_bound = E_ES.M)
+    JuMP.@constraint(model, [t=1:T], pES.c[t]*.95 - pES.d[t]/.95 == eES[t]-(t>1 ? eES[t-1] : E_ES.i))
+    return pES, bES, eES
+    # NamedTuple(k => ı.(v) for (k, v) = pairs(pES))
+end;
+function gen_ac_data()::Tuple
     CND   = .5rand(1:7)   # thermal conductance of the building wall
     INR   = rand(6:20)    # thermal inertia of the building
     COP   = rand(2:.5:4)  # how many Watts cooling power for 1-Watt e-power
@@ -59,48 +82,19 @@ function gen_ac_data()
     Q_BUS = rand(25:35)   # RateA of the cooling water/air pipeline
     OH    = rand(24:29)   # the hottest indoor degree Celsius
     OΔ    = rand(4:9)     # the coldest indoor degree Celsius = OH - OΔ
-    P_AC  = get_P_AC(O, OH, CND, Q_I, COP)
+    P_AC  = pc_P_AC(O, OH, CND, Q_I, COP)
     return CND, INR, COP, Q_I, Q_BUS, OH, OΔ, P_AC
-end;
-function get_E_ES(rng)
-    M = rand(rng) # Max E
-    i = rand(0:M) # initial SOC _is_ this value
-    e = rand(0:min(M, 21)) # ending SOC should ≥ this value
-    local E_ES = (i = i, M = M, e = e) # assume lb = 0 w.l.o.g.
-end;
-function get_self_P_BUS(D, U, P_EV, E_EV, O, CND, INR, COP, Q_I, OH, OΔ, P_AC)
-    model = JuMP.Model(() -> Gurobi.Optimizer(GRB_ENV))
-    JuMP.set_silent(model)
-    bU, pU = add_U_module!(model, U)
-    bEV, pEV = add_self_EV_module!(model, P_EV, E_EV)
-    o, q, pAC = add_AC_module!(model, O, CND, INR, COP, Q_I, 0, OH, OΔ, P_AC) # Q_BUS = 0
-    pBus = JuMP.@variable(model)
-    JuMP.@constraint(model, pBus .≥ D + pU + pEV + pAC) # No G | ES
-    JuMP.@objective(model, Min, pBus)
-    JuMP.optimize!(model); JuMP.assert_is_solved_and_feasible(model; allow_local = false)
-    val = ı(pBus)
-    val > 0 || error("The self household has P_BUS = $val")
-    local P_BUS = ceil(Int, val)
-end;
-function add_ES_module!(model, P_ES, E_ES)
-    p_ES = (
-        c = JuMP.@variable(model, [1:T], lower_bound = 0, upper_bound = P_ES.c),
-        d = JuMP.@variable(model, [1:T], lower_bound = 0, upper_bound = P_ES.d)
-    ); e_ES = JuMP.@variable(model, [t=1:T], lower_bound = t<T ? 0 : E_ES.e, upper_bound = E_ES.M)
-    JuMP.@constraint(model, [t=1:T], .95p_ES.c[t] - p_ES.d[t]/.95 == e_ES[t]-(t>1 ? e_ES[t-1] : E_ES.i))
-    return p_ES, e_ES
 end;
 function add_AC_module!(model, O, CND, INR, COP, Q_I, Q_BUS, OH, OΔ, P_AC)
     pAC = JuMP.@variable(model, [1:T], lower_bound = 0, upper_bound = P_AC)
     o = JuMP.@variable(model, [1:T], lower_bound = OH-OΔ, upper_bound = OH)
     q = JuMP.@variable(model, [1:T], lower_bound = 0, upper_bound = Q_BUS)
     JuMP.@constraint(model, [t=1:T], (O[t]-o[t])CND + Q_I[t] -q[t] -pAC[t]COP == (o[t<T ? t+1 : 1]-o[t])INR)
-    return o, q, pAC
+    return o, q, pAC # pAC is dependent variable
 end;
 function add_U_module!(model, U)
-    bU = JuMP.@variable(model, [t = 1:T, i = eachindex(U)], Bin) # Matrix{JuMP.VariableRef}
+    bU::Matrix{JuMP.VariableRef} = JuMP.@variable(model, [t = 1:T, i = eachindex(U)], Bin)
     JuMP.@constraint(model, sum(bU; dims = 1) .≥ true)
-    # ✅ dependent variable is modeled as @expression
     pU = JuMP.@expression(model, [t=1:T], sum(sum(bU[prev(t,φ-1,T), i]P for (φ,P) = enumerate(v)) for (i,v) = enumerate(U))) # Vector{JuMP.AffExpr}
     return bU, pU
 end;
@@ -109,7 +103,21 @@ function add_self_EV_module!(model, P_EV, E_EV) # self means a household in a bl
     JuMP.@constraint(model, (P_EV.m)bEV ≤ pEV)
     JuMP.@constraint(model, pEV ≤ (P_EV.M)bEV)
     JuMP.@constraint(model, sum(pEV) ≥ E_EV)
-    return bEV, pEV
+    return bEV, pEV # bEV can be _inferred from_ pEV
+end;
+function pc_self_P_BUS(D, U, P_EV, E_EV, O, CND, INR, COP, Q_I, OH, OΔ, P_AC)::Int
+    model = get_honest_model()
+    bU, pU = add_U_module!(model, U)
+    bEV, pEV = add_self_EV_module!(model, P_EV, E_EV)
+    o, q, pAC = add_AC_module!(model, O, CND, INR, COP, Q_I, 0, OH, OΔ, P_AC) # Q_BUS = 0
+    pBus = JuMP.@variable(model)
+    JuMP.@constraint(model, pBus .≥ D + pU + pEV + pAC) # No G | ES
+    JuMP.@objective(model, Min, pBus)
+    JuMP.optimize!(model)
+    JuMP.termination_status(model) == JuMP.OPTIMAL || error("$(JuMP.termination_status(model))")
+    val = JuMP.objective_value(model)
+    val > 0 || error("The self household has P_BUS = $val")
+    local P_BUS = ceil(Int, val)
 end;
 function add_EV_1_module!(model, P_EV_1, E_EV_1)
     bLent, pLent = JuMP.@variable(model, [1:T], Bin), JuMP.@variable(model, [1:T])
@@ -144,9 +152,9 @@ function add_circuit_breaker_pair_module!(model, P_BUS_1, P_BUS_2,
     JuMP.@constraint(model, pBus_2 ≥ pEV_2 + pU_2 + pAC_2 + D_2)
     return pBus_1, pBus_2
 end;
+###############################################################
 function get_a_paired_block(O)::NamedTuple
-    model = JuMP.Model(() -> Gurobi.Optimizer(GRB_ENV)) # for a block who has a lender and a borrower house
-    JuMP.set_silent(model)
+    model = get_honest_model() # for a block who has a lender and a borrower house
     # 6 lines
     G = rand(0:17, T)
     D_1 = rand(0:5, T)
@@ -155,7 +163,7 @@ function get_a_paired_block(O)::NamedTuple
     P_EV_1, E_EV_1 = (m = rand((1., 1.5)), M = rand(3:7)), rand(10:39)
     CND_1, INR_1, COP_1, Q_I_1, Q_BUS_1, OH_1, OΔ_1, P_AC_1 = gen_ac_data()
     # lender house
-    p_ES, e_ES = add_ES_module!(model, P_ES, E_ES) # only for the lender house
+    pES, bES, eES = add_ES_module!(model, P_ES, E_ES)
     bU_1, pU_1 = add_U_module!(model, U_1)
     bEV_1, pEV_1, bLent, pLent = add_EV_1_module!(model, P_EV_1, E_EV_1)
     o_1, q_1, pAC_1 = add_AC_module!(model, O, CND_1, INR_1, COP_1, Q_I_1, 0, OH_1, OΔ_1, P_AC_1) # Q_BUS = 0
@@ -174,7 +182,8 @@ function get_a_paired_block(O)::NamedTuple
     temp_c = JuMP.@constraint(model, pBus_2 .== temp_x)
     JuMP.@constraint(model, pBus_2 ≥ pEV_2 + pU_2 + pAC_2 + D_2)
     JuMP.@objective(model, Min, temp_x)
-    JuMP.optimize!(model); JuMP.assert_is_solved_and_feasible(model; allow_local = false)
+    JuMP.optimize!(model)
+    JuMP.termination_status(model) == JuMP.OPTIMAL || error("$(JuMP.termination_status(model))")
     temp_float64 = ı(temp_x)
     temp_float64 > 0 || error("common pBus_2 has value $temp_float64")
     P_BUS_2 = ceil(Int, temp_float64)
@@ -182,70 +191,29 @@ function get_a_paired_block(O)::NamedTuple
     JuMP.delete(model, temp_x)
     JuMP.set_upper_bound.(pBus_2, P_BUS_2)
     temp_x = JuMP.@variable(model) # reuse the local name
-    JuMP.@constraint(model, -temp_x .≤ p_ES.c -p_ES.d -G + pLent + pEV_1 + pU_1 + pAC_1 + D_1)
-    JuMP.@constraint(model,  temp_x .≥ p_ES.c -p_ES.d -G + pLent + pEV_1 + pU_1 + pAC_1 + D_1)
+    JuMP.@constraint(model, -temp_x .≤ pES.c -pES.d -G + pLent + pEV_1 + pU_1 + pAC_1 + D_1)
+    JuMP.@constraint(model,  temp_x .≥ pES.c -pES.d -G + pLent + pEV_1 + pU_1 + pAC_1 + D_1)
     JuMP.@objective(model, Min, temp_x)
-    JuMP.optimize!(model); JuMP.assert_is_solved_and_feasible(model; allow_local = false)
+    JuMP.optimize!(model)
+    JuMP.termination_status(model) == JuMP.OPTIMAL || error("$(JuMP.termination_status(model))")
     temp_float64 = ı(temp_x)
     temp_float64 > -1e-5 || error("pBus_1 has value $temp_float64")
     P_BUS_1 = max(1, ceil(Int, temp_float64))
-    local d = (
-        P_BUS_1 = P_BUS_1,
-        P_BUS_2 = P_BUS_2,
-        G = G,
-        P_ES = P_ES,
-        E_ES = E_ES,
-        D_1 = D_1,
-        D_2 = D_2,
-        U_1 = U_1,
-        U_2 = U_2,
-        P_EV_1 = P_EV_1,
-        P_EV_2 = P_EV_2,
-        E_EV_1 = E_EV_1,
-        E_EV_2 = E_EV_2,
-        CND_1  = CND_1,  
-        CND_2  = CND_2,  
-        INR_1  = INR_1,  
-        INR_2  = INR_2,  
-        COP_1  = COP_1,  
-        COP_2  = COP_2,  
-        Q_I_1  = Q_I_1,  
-        Q_I_2  = Q_I_2,
-        Q_BUS_1 = Q_BUS_1,
-        Q_BUS_2 = Q_BUS_2,
-        OH_1   = OH_1,   
-        OH_2   = OH_2,   
-        OΔ_1   = OΔ_1,   
-        OΔ_2   = OΔ_2,   
-        P_AC_1 = P_AC_1, 
-        P_AC_2 = P_AC_2 
-    )
-end;
+    (;P_BUS_1, P_BUS_2, G, P_ES, E_ES, D_1, D_2, U_1, U_2, P_EV_1, P_EV_2,
+    E_EV_1, E_EV_2, CND_1, CND_2, INR_1, INR_2, COP_1, COP_2, Q_I_1, Q_I_2,
+    Q_BUS_1, Q_BUS_2, OH_1, OH_2, OΔ_1, OΔ_2, P_AC_1, P_AC_2)
+end; 
 function get_a_self_block(O)::NamedTuple
     D = rand(0:5, T) # base demand
     U = [rand(1:4, rand(2:5)) for _ = 1:rand(1:4)] # each entry is a cycle vector of an uninterruptible load 
     P_EV, E_EV = (m = rand((1., 1.5)), M = rand(3:7)), rand(10:39)
     CND, INR, COP, Q_I, Q_BUS, OH, OΔ, P_AC = gen_ac_data()
-    P_BUS = get_self_P_BUS(D, U, P_EV, E_EV, O, CND, INR, COP, Q_I, OH, OΔ, P_AC)
-    local d = (
-        P_BUS = P_BUS,      
-        D     = D    ,   
-        U     = U    ,   
-        P_EV  = P_EV ,      
-        E_EV  = E_EV ,      
-        CND   = CND  ,   
-        INR   = INR  ,   
-        COP   = COP  ,   
-        Q_I   = Q_I  ,  
-        Q_BUS = Q_BUS, 
-        OH    = OH   ,      
-        OΔ    = OΔ   ,      
-        P_AC  = P_AC       
-    )
+    P_BUS = pc_self_P_BUS(D, U, P_EV, E_EV, O, CND, INR, COP, Q_I, OH, OΔ, P_AC)
+    (;P_BUS, D, U, P_EV, E_EV, CND, INR, COP, Q_I, Q_BUS, OH, OΔ, P_AC)
 end;
 function add_a_paired_block!(model, d::NamedTuple)::NamedTuple
     # lender house
-    p_ES, e_ES = add_ES_module!(model, d.P_ES, d.E_ES)
+    pES, bES, eES = add_ES_module!(model, d.P_ES, d.E_ES)
     bU_1, pU_1 = add_U_module!(model, d.U_1)
     bEV_1, pEV_1, bLent, pLent = add_EV_1_module!(model, d.P_EV_1, d.E_EV_1)
     o_1, q_1, pAC_1 = add_AC_module!(model, O, d.CND_1, d.INR_1, d.COP_1, d.Q_I_1, 0, d.OH_1, d.OΔ_1, d.P_AC_1) # Q_BUS = 0
@@ -255,50 +223,16 @@ function add_a_paired_block!(model, d::NamedTuple)::NamedTuple
     o_2, q_2, pAC_2 = add_AC_module!(model, O, d.CND_2, d.INR_2, d.COP_2, d.Q_I_2, 0, d.OH_2, d.OΔ_2, d.P_AC_2) # Q_BUS = 0
     # circuit breaker pair
     pBus_1, pBus_2 = add_circuit_breaker_pair_module!(model, d.P_BUS_1, d.P_BUS_2,
-        p_ES, d.G, pLent, pEV_1, pU_1, pAC_1, d.D_1,
+        pES, d.G, pLent, pEV_1, pU_1, pAC_1, d.D_1,
         pEV_2, pU_2, pAC_2, d.D_2)
-    local x = (
-        pBus_1 = pBus_1, 
-        pBus_2 = pBus_2,
-        q_1 = q_1,
-        q_2 = q_2,
-        pLent = pLent
-    )
+    (;pBus_1, pBus_2, bLent, bES, bEV_1, bEV_2, bU_1, bU_2, q_1, q_2)
 end;
 function add_a_self_block!(model, d::NamedTuple)::NamedTuple
     bU, pU = add_U_module!(model, d.U)
     bEV, pEV = add_self_EV_module!(model, d.P_EV, d.E_EV)
     o, q, pAC = add_AC_module!(model, O, d.CND, d.INR, d.COP, d.Q_I, 0, d.OH, d.OΔ, d.P_AC) # Q_BUS = 0
     pBus = add_self_circuit_breaker_module!(model, d.P_BUS, d.D, pU, pEV, pAC)
-    local x = (
-        pBus = pBus, 
-        q = q
-    )
-end;
-function pre_fill!(model, D, X)
-    for j = Rng1
-        local d = get_a_paired_block(O)
-        push!(D, d)
-        local x = add_a_paired_block!(model, d)
-        push!(X, x)
-        print("\rj = $j")
-    end
-    for j = Rng2
-        local d = get_a_self_block(O)
-        push!(D, d)
-        local x = add_a_self_block!(model, d)
-        push!(X, x)
-        print("\rj = $j")
-    end
-    JuMP.@expression(model, pA, sum(+(X[j].pBus_1, X[j].pBus_2) for j = Rng1) + sum(X[j].pBus for j = Rng2)) # a 24-Vector
-    JuMP.@expression(model, qA, sum(+(X[j].q_1,    X[j].q_2   ) for j = Rng1) + sum(X[j].q    for j = Rng2)) # a 24-Vector
-    JuMP.@variable(model, pA_ub)
-    JuMP.@constraint(model, pA .≤ pA_ub)
-    @info "doing the FEAS optimize!"
-    JuMP.optimize!(model)
-    (t, p) = (JuMP.termination_status(model), JuMP.primal_status(model))
-    t == JuMP.OPTIMAL || error("terminate with $t")
-    p == JuMP.FEASIBLE_POINT || error("primal terminate with $p ")
+    (;pBus, bEV, bU, q)
 end;
 function set_qˈs_ub!(D, X)
     for j = Rng1
@@ -309,48 +243,336 @@ function set_qˈs_ub!(D, X)
         JuMP.set_upper_bound.(X[j].q, D[j].Q_BUS)
     end
 end;
-function get_Q_A(model) return map(x -> rand(0.25:0.05:0.95)x, ı.(model[:qA])) end;
-function get_E_Q(model) return round(Int, rand(0.25:0.05:0.85)sum(ı.(model[:qA]))) end;
-function get_global_restrictions()
-    JuMP.@objective(model, Min, model[:pA_ub])
-    JuMP.set_attribute(model, "mipgap", 5/1000)
-    JuMP.set_attribute(model, "solutionlimit", 10)
-    JuMP.set_attribute(model, "timelimit", 3600)
-    @info "doing the 1st optimize!"
-    JuMP.optimize!(model); assert_is_approxly_solved(model) # 1️⃣ opt without priced power
-    P_A::Int = let val = ı(model[:pA_ub])
-        val > 0 || error("pA_ub has value $val")
-        ceil(Int, val)
-    end
-    JuMP.set_upper_bound(model[:pA_ub], P_A)
-    JuMP.@objective(model, Min, C ⋅ model[:pA])
-    @info "doing the 2nd optimize!"
-    JuMP.optimize!(model); assert_is_approxly_solved(model) # 2️⃣ opt with q = 0 (thus costly)
-    set_qˈs_ub!(D, X) # start sending cooling power
-    @info "doing the 3rd optimize!"
-    JuMP.optimize!(model); assert_is_approxly_solved(model) # 3️⃣ opt with unlimited qA
-    all(map(x -> x>0, ı.(model[:pA]))) || error("there is a `t` when `pA` < 0");
-    Q_A::Vector{Float64} = get_Q_A(model)
-    JuMP.@constraint(model, model[:qA] ≤ Q_A)
-    @info "doing the 4th optimize!"
-    JuMP.optimize!(model); assert_is_approxly_solved(model) # 4️⃣ opt with limited qA
-    E_Q::Int = get_E_Q(model)
-    JuMP.@constraint(model, sum(model[:qA]) ≤ E_Q);
-    @info "doing the 5th optimize!"
-    JuMP.optimize!(model); assert_is_approxly_solved(model) # 5️⃣ opt with limited Eq
-    println("Global EV lending $(sum([ı.(X[j].pLent) for j = Rng1]))")  # see if there is lending behavior at each time step
-    return P_A, Q_A, E_Q
+function get_Q_A(model)::Vector{Int} return map(x -> ceil(Int, ı(x)rand(0.25:0.05:0.95)), model[:qA]) end;
+function get_E_Q(model)::Int return round(Int, rand(0.25:0.05:0.85)sum(ı.(model[:qA]))) end;
+################################################################################
+
+# DW decomposition
+
+################################################################################
+function initialize_out(an_UB)
+    model = JuMP.direct_model(Gurobi.Optimizer()) # CTPLN LP
+    JuMP.set_silent(model)
+    JuMP.set_attribute(model, "Threads", 1)
+    JuMP.@variable(model, β[1:T] ≥ 0)
+    JuMP.@constraint(model, sum(β) == 1) # ⚠️ special
+    JuMP.@variable(model, θ[1:J])
+    JuMP.@expression(model, out_obj_tbMax, sum(θ))
+    JuMP.@objective(model, Max, out_obj_tbMax)
+    JuMP.@constraint(model, out_obj_tbMax ≤ an_UB)
+    return model, θ, β
 end;
+function bilin_expr(j, iˈı::Function, β) # pivot
+    JuMP.@expression(model, sum(iˈı(p)b for (b, p) = zip(β,
+        j ∈ Rng1 ? X[j].pBus_1 + X[j].pBus_2 : X[j].pBus
+    )))
+end;
+function subproblemˈs_duty(j, snap, inbox)
+    t = let β = snap.β, mj = inn[j]
+        JuMP.@objective(mj, Min, bilin_expr(j, identity, β))
+        JuMP.optimize!(mj) # 🕰️
+        JuMP.termination_status(mj)
+    end
+    lens = if t == JuMP.OPTIMAL
+        local con = JuMP.@build_constraint(θ[j] ≤ bilin_expr(j, ı, β)) # always a VI
+        local can_cut_off = function(new_snap)
+            local β = new_snap.β
+            vio_degree = new_snap.θ[j] - bilin_expr(j, ı, β)
+            return vio_degree > COT, vio_degree
+        end
+        local ver = let x::NamedTuple = X[j]
+            if j in Rng1
+                (
+                    bES = get_Bool_value(x.bES),
+                    bLent = get_Bool_value(x.bLent),
+                    bEV_1 = get_Bool_value(x.bEV_1),
+                    bEV_2 = get_Bool_value(x.bEV_2),
+                    bU_1 = get_Bool_value(x.bU_1),
+                    bU_2 = get_Bool_value(x.bU_2),
+                    pBus = mapreduce(v -> map(ı, v), +, (x.pBus_1, x.pBus_2))
+                )
+            else
+                (
+                    bEV = get_Bool_value(x.bEV),
+                    bU = get_Bool_value(x.bU),
+                    pBus = map(ı, x.pBus)
+                )
+            end
+        end
+        function(new_snap)
+            j, can_cut_off(new_snap), con, ver
+        end
+    else # [abnormal] should be thrown in the master
+        function(new_snap)
+            j, (false, t), missing, missing
+        end
+    end
+    @lock inbox_lock push!(inbox, lens)
+end;
+function wait_until_all_started(taskvec)
+    in_pool = Set(eachindex(taskvec))
+    while true
+        isempty(in_pool) && return
+        progress = false
+        for j = in_pool
+            if istaskstarted(taskvec[j])
+                pop!(in_pool, j)
+                progress = true
+                break
+            end
+        end
+        progress && continue
+        yield()
+    end
+end;
+function shot!(timestamp)
+    JuMP.optimize!(model)
+    JuMP.termination_status(model) == JuMP.OPTIMAL || error("$(JuMP.termination_status(model))")
+    snap = (t = timestamp += 1, θ = ı.(θ), β = ı.(β), ub = JuMP.objective_bound(model))
+    timestamp, snap
+end;
+function warm_up()
+    inbox, js_remains = Function[], Set(1:J)
+    _, snap = shot!(0)
+    sub_tasks = [Threads.@spawn subproblemˈs_duty(j, snap, inbox) for j = 1:J]
+    wait_until_all_started(sub_tasks)
+    while true
+        if isempty(inbox)
+            yield()
+            continue
+        end
+        while !isempty(inbox)
+            lens = @lock inbox_lock pop!(inbox)
+            local j, (_, ø), con, ver = lens(snap)
+            ismissing(con) && error("Subproblem $j terminates with $ø")
+            JuMP.add_constraint(model, con), push!(VCG[j], ver)
+            pop!(js_remains, j)
+            isempty(js_remains) && return
+        end
+    end
+end;
+function masterˈs_loop(snap, timestamp, inbox)
+    v, i = fill(0, J), 0
+    while true
+        if isempty(inbox) # no event happens
+            yield()
+            continue
+        end # ∀ j, we have j ∈ buffer ∪ inbox ∪ js_at_large
+        up = false
+        while true
+            lens = @lock inbox_lock pop!(inbox)
+            local j, (cut_off_by_j, ø), con, ver = lens(snap)
+            ismissing(con) && error("Subproblem $j terminates with $ø")
+            if cut_off_by_j
+                _, _, up = JuMP.add_constraint(model, con), push!(VCG[j], ver), true
+                println("▶ ub = $(snap.ub) | t = $(snap.t), j = $j | vio = $ø")
+            end
+            v[i+=1] = j # write the buffer
+            isempty(inbox) && break
+            (up && i == LOGIS) && break # early break to update master model, i.e. snap
+        end
+        if up
+            timestamp, snap = shot!(timestamp)
+            for j = view(v, 1:i) Threads.@spawn subproblemˈs_duty(j, snap, inbox) end
+            i = 0
+        elseif i == J
+            println("▶▶▶ No more progress can be made, quit!")
+            return
+        end
+    end
+end;
+function masterˈs_algorithm()
+    timestamp, inbox = -1, Function[]
+    timestamp, snap = shot!(timestamp)
+    sub_tasks = [Threads.@spawn subproblemˈs_duty(j, snap, inbox) for j = 1:J]
+    wait_until_all_started(sub_tasks)
+    wait(Threads.@spawn masterˈs_loop(snap, timestamp, inbox))
+end;
+function fill_model_D_X!(v::Vector, D, X)
+    for (ȷ, g, a) = zip((Rng1, Rng2), (get_a_paired_block, get_a_self_block), (add_a_paired_block!, add_a_self_block!))
+        for j = ȷ
+            local d = g(O)
+            push!(D, d)
+            push!(X, a(v[j], d))
+            print("\rj = $j")
+        end
+    end
+end;
+function fill_model_D_X!(monolithic_model, D, X)
+    for (ȷ, g, a) = zip((Rng1, Rng2), (get_a_paired_block, get_a_self_block), (add_a_paired_block!, add_a_self_block!))
+        for j = ȷ
+            local d = g(O)
+            push!(D, d)
+            push!(X, a(monolithic_model, d))
+            print("\rj = $j")
+        end
+    end
+end;
+function get_prob_decision(model, v::Vector{NamedTuple})
+    local x = map(_ -> JuMP.@variable(model, lower_bound = 0), v)
+    JuMP.@constraint(model, sum(x) == 1)
+    x
+end;
+function build_prm!(model)
+    JuMP.unset_silent(model)
+    l = map(v -> get_prob_decision(model, v), VCG)
+    Y = [j in Rng1 ? (
+        bES = @get_int_decision(model, sum((t.bES)l for (l, t) = zip(l[j], VCG[j]))),
+        bU_1 = @get_int_decision(model, sum((t.bU_1)l for (l, t) = zip(l[j], VCG[j]))),
+        bU_2 = @get_int_decision(model, sum((t.bU_2)l for (l, t) = zip(l[j], VCG[j]))),
+        bEV_1 = @get_int_decision(model, sum((t.bEV_1)l for (l, t) = zip(l[j], VCG[j]))),
+        bEV_2 = @get_int_decision(model, sum((t.bEV_2)l for (l, t) = zip(l[j], VCG[j]))),
+        bLent = @get_int_decision(model, sum((t.bLent)l for (l, t) = zip(l[j], VCG[j]))),
+        pBus = JuMP.@expression(model, sum((t.pBus)l for (l, t) = zip(l[j], VCG[j])))
+    ) : (
+        bU = @get_int_decision(model, sum((t.bU)l for (l, t) = zip(l[j], VCG[j]))),
+        bEV = @get_int_decision(model, sum((t.bEV)l for (l, t) = zip(l[j], VCG[j]))),
+        pBus = JuMP.@expression(model, sum((t.pBus)l for (l, t) = zip(l[j], VCG[j])))
+    ) for j = 1:J]
+    JuMP.@variable(model, e)
+    JuMP.@constraint(model, e .≥ sum(t.pBus for t = Y))
+    JuMP.@objective(model, Min, e)
+    return Y
+end;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+###############################################################
+#
+# This .jl file can generate test data, which is embodied by
+# the following NamedTuple
+
+# [You collect the generated data here]
+# [then save it at the end of file]
+let
+    K = 1
+    LOGIS = 255
+    seed = 932457435072
+    P_A = 2581
+    Q_A = [2423, 3267, 5037, 2663, 5946, 5034, 6263, 2971, 6856, 5053, 7143, 2363, 3572, 2409, 6647, 4598, 7038, 3970, 4483, 6321, 4072, 4630, 2491, 4358]
+    E_Q = 76726
+    (;K, LOGIS, seed, P_A, Q_A, E_Q)
+end
+###############################################################
+
+const K = 1;
+const LOGIS = 255;
+Random.seed!(932457435072);
+
+const J = (K)LOGIS;
 const GRB_ENV = Gurobi.Env();
 const T = 24;
-
-# Input
-Random.seed!(1234567);
-const J = 3000;
-
-# Output
+const (Rng1, Rng2) = get_pair_and_self_Rng(J);
 const (C, O) = get_C_and_O(); # price and Celsius vector
-const model, D, X = JuMP.Model(() -> Gurobi.Optimizer(GRB_ENV)), NamedTuple[], NamedTuple[];
-const (Rng1, Rng2) = get_pair_and_self_rng(J);
-pre_fill!(model, D, X)
-const P_A, Q_A, E_Q = get_global_restrictions()
+const D, X = NamedTuple[], NamedTuple[];
+
+VALIDITY_CHECK_MODE::Int = 1
+if VALIDITY_CHECK_MODE == 1
+    model = JuMP.Model(() -> Gurobi.Optimizer(GRB_ENV)) # Monolithic Gurobi One Shot
+    fill_model_D_X!(model, D, X)
+    e = JuMP.@variable(model);
+    JuMP.@expression(model, pA, sum(X[j].pBus_1 + X[j].pBus_2 for j = Rng1) + sum(X[j].pBus for j = Rng2));
+    JuMP.@constraint(model, pA .≤ e);
+    JuMP.@objective(model, Min, e);
+    @info "Do the 1st optimize! to get P_A"
+    JuMP.optimize!(model);
+    if JuMP.primal_status(model) == JuMP.FEASIBLE_POINT
+        P_AGR_BASE = JuMP.objective_value(model)
+    end
+    LIFT = 1.08
+    ##########################
+    # After deriving P_AGR, do
+    ##########################
+    P_AGR_BASE = 2581 # 🟠🟠🟠✒️ manual modify! from DW-CG-primal
+    JuMP.set_upper_bound(e, (LIFT)P_AGR_BASE)
+    JuMP.@objective(model, Min, C ⋅ pA)
+    @info "Do the 2nd optimize! with ele-price, bounded pA, but no cooling"
+    JuMP.optimize!(model) # observe its objective range (with real prices)
+    set_qˈs_ub!(D, X) # start sending cooling power
+    JuMP.@expression(model, qA, sum(X[j].q_1 + X[j].q_2 for j = Rng1) + sum(X[j].q for j = Rng2))
+    @info "Do the 3rd optimize! with cooling sending, you should WAIT until a feasible solution"
+    JuMP.optimize!(model)
+    const Q_A::Vector{Int} = get_Q_A(model)
+    JuMP.@constraint(model, qA ≤ Q_A)
+    @info "Do the 4th optimize! with power-limited cooling, you should WAIT until a feasible solution"
+    JuMP.optimize!(model)
+    const E_Q::Int = get_E_Q(model)
+    @show Q_A E_Q;
+    JuMP.@constraint(model, sum(qA) ≤ E_Q)
+    @info "Do the 5th optimize! with energy-limited cooling"
+    JuMP.optimize!(model)
+else # DW algorithm
+    const COT = 0.5/J;
+    const inbox_lock = Threads.ReentrantLock();
+    const inn = [get_honest_model() for j = 1:J];
+    const VCG = [NamedTuple[] for _ = 1:J]; # collect the Vertices found in the CG algorithm
+    const model, θ, β = initialize_out(30J); # ⚠️⚠️⚠️
+    fill_model_D_X!(inn, D, X)
+end
+
+############################################################
+
+# Validity check using small-scale comparative tests Ends.
+# start DW-CG
+
+############################################################
+
+warm_up()
+masterˈs_algorithm()
+_, snap = shot!(0) # snap.ub stores the Lagrangian bound
+
+############################################################
+
+# Recover a primal-side (Int) feasible solution
+
+############################################################
+
+const prm = JuMP.Model(() -> Gurobi.Optimizer(GRB_ENV)); 
+const Y = build_prm!(prm);
+JuMP.optimize!(prm)
+JuMP.termination_status(prm) == JuMP.OPTIMAL || error("fails");
+JuMP.objective_value(prm) # The P_AGR should be higher than this value
+
+
+
+
+
+
+################################################################################
+
+# [End] The Data Depot
+
+################################################################################
+
+let
+    K = 3
+    LOGIS = 255
+    seed = 243085122345
+    P_A = 9685
+    Q_A = [6651, 17589, 13838, 17357, 9677, 10264, 8599, 11848, 23206, 20316, 23022, 10348, 14182, 11630, 11557, 8853, 10046, 19377, 9378, 11392, 19932, 10549, 10917, 8608]
+    E_Q = 111698
+    (;K, LOGIS, seed, P_A, Q_A, E_Q)
+end
+let
+    K = 1
+    LOGIS = 255
+    seed = 932457435072
+    P_A = 2581
+    Q_A = [2423, 3267, 5037, 2663, 5946, 5034, 6263, 2971, 6856, 5053, 7143, 2363, 3572, 2409, 6647, 4598, 7038, 3970, 4483, 6321, 4072, 4630, 2491, 4358]
+    E_Q = 76726
+    (;K, LOGIS, seed, P_A, Q_A, E_Q)
+end
