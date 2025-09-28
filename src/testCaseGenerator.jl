@@ -4,8 +4,8 @@ import LinearAlgebra.⋅ as ⋅
 import Random
 import Dates.now as now
 macro get_int_decision(model, expr) return esc(quote
-    let e = JuMP.@expression($model, $expr)
-        local a = map(_ -> JuMP.@variable($model, integer = true), e)
+    let e = JuMP.@expression($model, $expr), a
+        a = map(_ -> JuMP.@variable($model, integer = true), e)
         JuMP.@constraint($model, a == e)
         a
     end
@@ -52,7 +52,7 @@ function get_honest_model(new = false)
 end;
 function get_pair_and_self_Rng(J)
     d = J÷4
-    local Rng1, Rng2 = 1:d, d+1:J
+    1:d, d+1:J # Rng1, Rng2
 end;
 function prev(t, d, T) return (n = t-d; n<1 ? T+n : n) end;
 function pc_P_AC(O, OH, CND, Q_I, COP) return ceil(Int, ((maximum(O) - OH)CND + maximum(Q_I)) / COP) end;
@@ -60,7 +60,7 @@ function get_E_ES(Rng)::NamedTuple
     M = rand(Rng) # Max E
     i = rand(0:M) # initial SOC _is_ this value
     e = rand(0:min(M, 21)) # ending SOC should ≥ this value
-    local E_ES = (i = i, M = M, e = e) # assume lb = 0 w.l.o.g.
+    (; i, M, e)
 end;
 function add_ES_module!(model, P_ES, E_ES)
     pES = ( # eES is dependent variable
@@ -117,7 +117,7 @@ function pc_self_P_BUS(D, U, P_EV, E_EV, O, CND, INR, COP, Q_I, OH, OΔ, P_AC)::
     JuMP.termination_status(model) == JuMP.OPTIMAL || error("$(JuMP.termination_status(model))")
     val = JuMP.objective_value(model)
     val > 0 || error("The self household has P_BUS = $val")
-    local P_BUS = ceil(Int, val)
+    ceil(Int, val) # P_BUS
 end;
 function add_EV_1_module!(model, P_EV_1, E_EV_1)
     bLent, pLent = JuMP.@variable(model, [1:T], Bin), JuMP.@variable(model, [1:T])
@@ -267,45 +267,36 @@ function bilin_expr(j, iˈı::Function, β) # pivot
         j ∈ Rng1 ? X[j].pBus_1 + X[j].pBus_2 : X[j].pBus
     )))
 end;
-function subproblemˈs_duty(j, snap, inbox)
-    t = let β = snap.β, mj = inn[j]
-        JuMP.@objective(mj, Min, bilin_expr(j, identity, β))
-        JuMP.optimize!(mj) # 🕰️
+function subproblemˈs_duty(j, s, inbox)
+    t = let mj = inn[j]
+        JuMP.@objective(mj, Min, bilin_expr(j, identity, s.β))
+        JuMP.optimize!(mj)
         JuMP.termination_status(mj)
     end
     lens = if t == JuMP.OPTIMAL
-        local con = JuMP.@build_constraint(θ[j] ≤ bilin_expr(j, ı, β)) # always a VI
-        local can_cut_off = function(new_snap)
-            local β = new_snap.β
-            vio_degree = new_snap.θ[j] - bilin_expr(j, ı, β)
-            return vio_degree > COT, vio_degree
+        con = JuMP.@build_constraint(θ[j] ≤ bilin_expr(j, ı, β)) # always a VI
+        can_cut_off = function(s)
+            vio_degree = s.θ[j] - bilin_expr(j, ı, s.β)
+            vio_degree > COT, vio_degree
         end
-        local ver = let x::NamedTuple = X[j]
-            if j in Rng1
-                (
-                    bES = get_Bool_value(x.bES),
-                    bLent = get_Bool_value(x.bLent),
-                    bEV_1 = get_Bool_value(x.bEV_1),
-                    bEV_2 = get_Bool_value(x.bEV_2),
-                    bU_1 = get_Bool_value(x.bU_1),
-                    bU_2 = get_Bool_value(x.bU_2),
-                    pBus = mapreduce(v -> map(ı, v), +, (x.pBus_1, x.pBus_2))
-                )
-            else
-                (
-                    bEV = get_Bool_value(x.bEV),
-                    bU = get_Bool_value(x.bU),
-                    pBus = map(ı, x.pBus)
-                )
-            end
+        ver = let x::NamedTuple = X[j]
+            j in Rng1 ? (
+                bES = get_Bool_value(x.bES),
+                bLent = get_Bool_value(x.bLent),
+                bEV_1 = get_Bool_value(x.bEV_1),
+                bEV_2 = get_Bool_value(x.bEV_2),
+                bU_1 = get_Bool_value(x.bU_1),
+                bU_2 = get_Bool_value(x.bU_2),
+                pBus = mapreduce(v -> map(ı, v), +, (x.pBus_1, x.pBus_2))
+            ) : (
+                bEV = get_Bool_value(x.bEV),
+                bU = get_Bool_value(x.bU),
+                pBus = map(ı, x.pBus)
+            )
         end
-        function(new_snap)
-            j, can_cut_off(new_snap), con, ver
-        end
-    else # [abnormal] should be thrown in the master
-        function(new_snap)
-            j, (false, t), missing, missing
-        end
+        function(s); j, can_cut_off(s), con, ver end
+    else
+        function(s); j, (false, t), missing, missing end
     end
     @lock inbox_lock push!(inbox, lens)
 end;
@@ -343,7 +334,7 @@ function warm_up()
         end
         while !isempty(inbox)
             lens = @lock inbox_lock pop!(inbox)
-            local j, (_, ø), con, ver = lens(snap)
+            j, (_, ø), con, ver = lens(snap)
             ismissing(con) && error("Subproblem $j terminates with $ø")
             JuMP.add_constraint(model, con), push!(VCG[j], ver)
             pop!(js_remains, j)
@@ -361,7 +352,7 @@ function masterˈs_loop(snap, timestamp, inbox)
         up = false
         while true
             lens = @lock inbox_lock pop!(inbox)
-            local j, (cut_off_by_j, ø), con, ver = lens(snap)
+            j, (cut_off_by_j, ø), con, ver = lens(snap)
             ismissing(con) && error("Subproblem $j terminates with $ø")
             if cut_off_by_j
                 _, _, up = JuMP.add_constraint(model, con), push!(VCG[j], ver), true
@@ -391,7 +382,7 @@ end;
 function fill_model_D_X!(v::Vector, D, X)
     for (ȷ, g, a) = zip((Rng1, Rng2), (get_a_paired_block, get_a_self_block), (add_a_paired_block!, add_a_self_block!))
         for j = ȷ
-            local d = g(O)
+            d = g(O)
             push!(D, d)
             push!(X, a(v[j], d))
             print("\rj = $j")
@@ -401,7 +392,7 @@ end;
 function fill_model_D_X!(monolithic_model, D, X)
     for (ȷ, g, a) = zip((Rng1, Rng2), (get_a_paired_block, get_a_self_block), (add_a_paired_block!, add_a_self_block!))
         for j = ȷ
-            local d = g(O)
+            d = g(O)
             push!(D, d)
             push!(X, a(monolithic_model, d))
             print("\rj = $j")
@@ -409,7 +400,7 @@ function fill_model_D_X!(monolithic_model, D, X)
     end
 end;
 function get_prob_decision(model, v::Vector{NamedTuple})
-    local x = map(_ -> JuMP.@variable(model, lower_bound = 0), v)
+    x = map(_ -> JuMP.@variable(model, lower_bound = 0), v)
     JuMP.@constraint(model, sum(x) == 1)
     x
 end;
