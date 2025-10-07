@@ -342,8 +342,9 @@ function warm_up()
         end
     end
 end;
-function masterˈs_loop(snap, timestamp, inbox)
+function masterˈs_loop(snap0, timestamp, inbox)
     v, i = fill(0, J), 0
+    snap = snap0
     while true
         if isempty(inbox) # no event happens
             yield()
