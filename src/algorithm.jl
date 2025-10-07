@@ -271,7 +271,8 @@ function bilin_expr(j, iˈı::Function, β, μ, ν)
     e3 = JuMP.@expression(model, ν * sum(iˈı(p) for p = (j ∈ Rng1 ? X[j].q_1 + X[j].q_2 : X[j].q)))
     JuMP.@expression(model, e01 + e2 + e3)
 end;
-function subproblemˈs_duty(j, s, inbox)
+function subproblemˈs_duty(j, ref, inbox)
+    s = ref.x
     t = let mj = inn[j]
         JuMP.@objective(mj, Min, bilin_expr(j, identity, s.β, s.μ, s.ν))
         JuMP.optimize!(mj)
@@ -336,7 +337,8 @@ end;
 function warm_up()
     inbox, js_remains = Function[], Set(1:J)
     _, snap = shot!(0)
-    sub_tasks = [Threads.@spawn subproblemˈs_duty(j, snap, inbox) for j = 1:J]
+    ref = Ref(snap)
+    sub_tasks = [Threads.@spawn subproblemˈs_duty(j, ref, inbox) for j = 1:J]
     wait_until_all_started(sub_tasks)
     while true
         if isempty(inbox)
@@ -353,9 +355,9 @@ function warm_up()
         end
     end
 end;
-function masterˈs_loop(snap0, timestamp, inbox)
+function masterˈs_loop(ref, timestamp, inbox)
     v, i = fill(0, J), 0
-    snap = snap0
+    snap = ref.x
     while true
         if isempty(inbox) # no event happens
             yield()
@@ -376,7 +378,8 @@ function masterˈs_loop(snap0, timestamp, inbox)
         end
         if up
             timestamp, snap = shot!(timestamp)
-            for j = view(v, 1:i) Threads.@spawn subproblemˈs_duty(j, snap, inbox) end
+            setfield!(ref, :x, snap)
+            for j = view(v, 1:i) Threads.@spawn subproblemˈs_duty(j, ref, inbox) end
             i = 0
         elseif i == J
             println("▶▶▶ No more progress can be made, quit!")
@@ -387,9 +390,10 @@ end;
 function masterˈs_algorithm()
     timestamp, inbox = -1, Function[]
     timestamp, snap = shot!(timestamp)
-    sub_tasks = [Threads.@spawn subproblemˈs_duty(j, snap, inbox) for j = 1:J]
+    ref = Ref(snap)
+    sub_tasks = [Threads.@spawn subproblemˈs_duty(j, ref, inbox) for j = 1:J]
     wait_until_all_started(sub_tasks)
-    wait(Threads.@spawn masterˈs_loop(snap, timestamp, inbox))
+    wait(Threads.@spawn masterˈs_loop(ref, timestamp, inbox))
 end;
 function fill_model_D_X!(v::Vector, D, X)
     for (ȷ, g, a) = zip((Rng1, Rng2), (get_a_paired_block, get_a_self_block), (add_a_paired_block!, add_a_self_block!))
