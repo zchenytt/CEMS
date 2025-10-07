@@ -268,7 +268,7 @@ function bilin_expr(j, iˈı::Function, β) # pivot
     )))
 end;
 function subproblemˈs_duty(j, ref, inbox)
-    s = ref.x
+    s = getfield(ref, :x)
     t = let mj = inn[j]
         JuMP.@objective(mj, Min, bilin_expr(j, identity, s.β))
         JuMP.optimize!(mj)
@@ -346,7 +346,7 @@ function warm_up()
 end;
 function masterˈs_loop(ref, timestamp, inbox)
     v, i = fill(0, J), 0
-    snap = ref.x
+    snap = getfield(ref, :x)
     while true
         if isempty(inbox) # no event happens
             yield()
