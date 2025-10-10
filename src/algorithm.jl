@@ -465,7 +465,7 @@ const (Rng1, Rng2) = get_pair_and_self_Rng(J);
 const (C, O) = get_C_and_O(); # price and Celsius vector
 const D, X = NamedTuple[], NamedTuple[];
 
-const inbox_lock = Threads.ReentrantLock();
+const inbox_lock = Base.ReentrantLock();
 const inn = [get_honest_model() for j = 1:J];
 const VCG = [NamedTuple[] for _ = 1:J]; # collect the Vertices found in the CG algorithm
 const model, θ, β, μ, ν = initialize_out();
