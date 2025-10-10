@@ -513,7 +513,7 @@ if VALIDITY_CHECK_MODE == 1
     JuMP.optimize!(model)
 else # DW algorithm
     const COT = 0.5/J;
-    const inbox_lock = Threads.ReentrantLock();
+    const inbox_lock = Base.ReentrantLock();
     const inn = [get_honest_model() for j = 1:J];
     const VCG = [NamedTuple[] for _ = 1:J]; # collect the Vertices found in the CG algorithm
     const model, θ, β = initialize_out(30J); # ⚠️⚠️⚠️
