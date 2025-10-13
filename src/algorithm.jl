@@ -47,6 +47,7 @@ function get_honest_model(new = false)
     JuMP.set_silent(m)
     JuMP.set_attribute(m, "MIPGap", 0)
     JuMP.set_attribute(m, "MIPGapAbs", 0)
+    JuMP.set_attribute(m, "TimeLimit", 30)
     JuMP.set_attribute(m, "Threads", 1) # also for the master LP, since we apply a FULLY async algorithm! 
     m
 end;
