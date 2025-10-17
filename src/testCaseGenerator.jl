@@ -1,12 +1,13 @@
 import JuMP, Gurobi
 import JuMP.value as ı
 import LinearAlgebra.⋅ as ⋅
-import Random
-import Dates.now as now
+import Statistics, Random
+const my_seed = 1999995
+
 macro get_int_decision(model, expr) return esc(quote
     let e = JuMP.@expression($model, $expr), a
         a = map(_ -> JuMP.@variable($model, integer = true), e)
-        JuMP.@constraint($model, a == e)
+        JuMP.@constraint($model, a .== e)
         a
     end
 end) end;
@@ -42,17 +43,16 @@ function get_C_and_O()
     ]
     return C[rand(1:5)], O[rand(1:5)]
 end;
-function get_honest_model(new = false)
-    m = new ? JuMP.Model(Gurobi.Optimizer) : JuMP.Model(() -> Gurobi.Optimizer(GRB_ENV))
+function get_honest_model()
+    m = JuMP.direct_model(Gurobi.Optimizer(GRB_ENV))
     JuMP.set_silent(m)
-    JuMP.set_attribute(m, "MIPGap", 0)
-    JuMP.set_attribute(m, "MIPGapAbs", 0)
-    JuMP.set_attribute(m, "TimeLimit", 30)
-    JuMP.set_attribute(m, "Threads", 1) # also for the master LP, since we apply a FULLY async algorithm! 
+    # JuMP.set_attribute(m, "MIPGap", 0)
+    # JuMP.set_attribute(m, "MIPGapAbs", 0)
+    JuMP.set_attribute(m, "Threads", 1)
     m
 end;
 function get_pair_and_self_Rng(J)
-    d = J÷4
+    d = 3J÷4
     1:d, d+1:J # Rng1, Rng2
 end;
 function prev(t, d, T) return (n = t-d; n<1 ? T+n : n) end;
@@ -68,8 +68,8 @@ function add_ES_module!(model, P_ES, E_ES)
         c = JuMP.@variable(model, [1:T], lower_bound = 0),
         d = JuMP.@variable(model, [1:T], lower_bound = 0)
     ); bES = JuMP.@variable(model, [1:T], Bin)
-        JuMP.@constraint(model, pES.c ≤ (bES)P_ES.c)
-        JuMP.@constraint(model, pES.d ≤ (1 .- bES)P_ES.d)
+        JuMP.@constraint(model, pES.c .≤ (bES)P_ES.c)
+        JuMP.@constraint(model, pES.d .≤ (1 .- bES)P_ES.d)
     eES = JuMP.@variable(model, [t=1:T], lower_bound = t<T ? 0 : E_ES.e, upper_bound = E_ES.M)
     JuMP.@constraint(model, [t=1:T], pES.c[t]*.95 - pES.d[t]/.95 == eES[t]-(t>1 ? eES[t-1] : E_ES.i))
     return pES, bES, eES
@@ -101,8 +101,8 @@ function add_U_module!(model, U)
 end;
 function add_self_EV_module!(model, P_EV, E_EV) # self means a household in a block with cardinality 1
     bEV, pEV = JuMP.@variable(model, [1:T], Bin), JuMP.@variable(model, [1:T])
-    JuMP.@constraint(model, (P_EV.m)bEV ≤ pEV)
-    JuMP.@constraint(model, pEV ≤ (P_EV.M)bEV)
+    JuMP.@constraint(model, (P_EV.m)bEV .≤ pEV)
+    JuMP.@constraint(model, pEV .≤ (P_EV.M)bEV)
     JuMP.@constraint(model, sum(pEV) ≥ E_EV)
     return bEV, pEV # bEV can be _inferred from_ pEV
 end;
@@ -123,25 +123,25 @@ end;
 function add_EV_1_module!(model, P_EV_1, E_EV_1)
     bLent, pLent = JuMP.@variable(model, [1:T], Bin), JuMP.@variable(model, [1:T])
     bEV_1, pEV_1 = JuMP.@variable(model, [1:T], Bin), JuMP.@variable(model, [1:T])
-    JuMP.@constraint(model, bEV_1 ≤ bLent)
-    JuMP.@constraint(model, (1 .- bLent)P_EV_1.m ≤ pLent)
-    JuMP.@constraint(model, pLent ≤ (1 .- bLent)P_EV_1.M)
-    JuMP.@constraint(model, (P_EV_1.m)bEV_1 ≤ pEV_1)
-    JuMP.@constraint(model, pEV_1 ≤ (P_EV_1.M)bEV_1)
+    JuMP.@constraint(model, bEV_1 .≤ bLent)
+    JuMP.@constraint(model, (1 .- bLent)P_EV_1.m .≤ pLent)
+    JuMP.@constraint(model, pLent .≤ (1 .- bLent)P_EV_1.M)
+    JuMP.@constraint(model, (P_EV_1.m)bEV_1 .≤ pEV_1)
+    JuMP.@constraint(model, pEV_1 .≤ (P_EV_1.M)bEV_1)
     JuMP.@constraint(model, sum(pEV_1) ≥ E_EV_1)
     return bEV_1, pEV_1, bLent, pLent
 end;
 function add_EV_2_module!(model, P_EV_2, E_EV_2, bLent, pLent)
     bEV_2, pEV_2 = JuMP.@variable(model, [1:T], Bin), JuMP.@variable(model, [1:T])
-    JuMP.@constraint(model, bEV_2 ≤ bLent)
-    JuMP.@constraint(model, (P_EV_2.m)bEV_2 ≤ pEV_2)
-    JuMP.@constraint(model, pEV_2 ≤ (P_EV_2.M)bEV_2)
+    JuMP.@constraint(model, bEV_2 .≤ bLent)
+    JuMP.@constraint(model, (P_EV_2.m)bEV_2 .≤ pEV_2)
+    JuMP.@constraint(model, pEV_2 .≤ (P_EV_2.M)bEV_2)
     JuMP.@constraint(model, sum(pEV_2 + pLent) ≥ E_EV_2)
     return bEV_2, pEV_2
 end;
 function add_self_circuit_breaker_module!(model, P_BUS, D, pU, pEV, pAC)
     pBus = JuMP.@variable(model, [1:T], lower_bound = 0, upper_bound = P_BUS)
-    JuMP.@constraint(model, pBus ≥ D + pU + pEV + pAC) # No G | ES
+    JuMP.@constraint(model, pBus .≥ D + pU + pEV + pAC) # No G | ES
     return pBus
 end;
 function add_circuit_breaker_pair_module!(model, P_BUS_1, P_BUS_2, 
@@ -149,8 +149,8 @@ function add_circuit_breaker_pair_module!(model, P_BUS_1, P_BUS_2,
     pEV_2, pU_2, pAC_2, D_2)
     pBus_1 = JuMP.@variable(model, [1:T], lower_bound = -P_BUS_1, upper_bound = P_BUS_1)
     pBus_2 = JuMP.@variable(model, [1:T], lower_bound = 0, upper_bound = P_BUS_2)
-    JuMP.@constraint(model, pBus_1 == p_ES.c -p_ES.d -G + pLent + pEV_1 + pU_1 + pAC_1 + D_1)
-    JuMP.@constraint(model, pBus_2 ≥ pEV_2 + pU_2 + pAC_2 + D_2)
+    JuMP.@constraint(model, pBus_1 .== p_ES.c -p_ES.d -G + pLent + pEV_1 + pU_1 + pAC_1 + D_1)
+    JuMP.@constraint(model, pBus_2 .≥ pEV_2 + pU_2 + pAC_2 + D_2)
     return pBus_1, pBus_2
 end;
 ###############################################################
@@ -181,7 +181,7 @@ function get_a_paired_block(O)::NamedTuple
     pBus_2 = JuMP.@variable(model, [1:T], lower_bound = 0)
     temp_x = JuMP.@variable(model)
     temp_c = JuMP.@constraint(model, pBus_2 .== temp_x)
-    JuMP.@constraint(model, pBus_2 ≥ pEV_2 + pU_2 + pAC_2 + D_2)
+    JuMP.@constraint(model, pBus_2 .≥ pEV_2 + pU_2 + pAC_2 + D_2)
     JuMP.@objective(model, Min, temp_x)
     JuMP.optimize!(model)
     JuMP.termination_status(model) == JuMP.OPTIMAL || error("$(JuMP.termination_status(model))")
@@ -270,12 +270,14 @@ function bilin_expr(j, iˈı::Function, β) # pivot
 end;
 function subproblemˈs_duty(j, ref, inbox)
     s = getfield(ref, :x)
-    t = let mj = inn[j]
-        JuMP.@objective(mj, Min, bilin_expr(j, identity, s.β))
-        JuMP.optimize!(mj)
-        JuMP.termination_status(mj)
-    end
-    lens = if t == JuMP.OPTIMAL
+    mj = inn[j]
+    JuMP.@objective(mj, Min, bilin_expr(j, identity, s.β))
+    setindex!(is_inn_solving_vec, true, j); JuMP.optimize!(mj); setindex!(is_inn_solving_vec, false, j)
+    push!(getfield(tnt, ifelse(j in Rng1, :pair, :self)), JuMP.solve_time(mj))
+    ps, ts = JuMP.primal_status(mj), JuMP.termination_status(mj)
+    lens = if ps != JuMP.FEASIBLE_POINT || ts ∉ [JuMP.OPTIMAL, JuMP.INTERRUPTED]
+        function(s); j, (ps, ts), missing, missing end # to be thrown
+    else
         con = JuMP.@build_constraint(θ[j] ≤ bilin_expr(j, ı, β)) # always a VI
         can_cut_off = function(s)
             vio_degree = s.θ[j] - bilin_expr(j, ı, s.β)
@@ -297,8 +299,6 @@ function subproblemˈs_duty(j, ref, inbox)
             )
         end
         function(s); j, can_cut_off(s), con, ver end
-    else
-        function(s); j, (false, t), missing, missing end
     end
     @lock inbox_lock push!(inbox, lens)
 end;
@@ -321,6 +321,7 @@ end;
 function shot!(timestamp)
     JuMP.optimize!(model)
     JuMP.termination_status(model) == JuMP.OPTIMAL || error("$(JuMP.termination_status(model))")
+    push!(tnt.master, JuMP.solve_time(model))
     snap = (t = timestamp += 1, θ = ı.(θ), β = ı.(β), ub = JuMP.objective_bound(model))
     timestamp, snap
 end;
@@ -330,26 +331,54 @@ function warm_up()
     ref = Ref(snap)
     sub_tasks = [Threads.@spawn subproblemˈs_duty(j, ref, inbox) for j = 1:J]
     wait_until_all_started(sub_tasks)
+    t0_0 = time()
     while true
         if isempty(inbox)
+            if time() - t0_0 > 2.2
+                j_stuck = first(js_remains)
+                if is_inn_solving_vec[j_stuck]
+                    Gurobi.GRBterminate(JuMP.backend(inn[j_stuck]))
+                    printstyled("\nWarning: manually interrupting inn[$j_stuck]..."; color = :reverse)
+                    while is_inn_solving_vec[j_stuck] yield() end
+                    printstyled("\rWarning: manually interrupt inn[$j_stuck]: Success"; color = :reverse)
+                    t0_0 = time()
+                end
+            end
             yield()
             continue
         end
         while !isempty(inbox)
             lens = @lock inbox_lock pop!(inbox)
-            j, (_, ø), con, ver = lens(snap)
-            ismissing(con) && error("Subproblem $j terminates with $ø")
+            j, (p, t), con, ver = lens(snap)
+            ismissing(con) && error("Subproblem $j terminates with $t and PrimalStatus $p")
             JuMP.add_constraint(model, con), push!(VCG[j], ver)
             pop!(js_remains, j)
+            len = length(js_remains)
+            print("\r$len    ")
             isempty(js_remains) && return
         end
+        t0_0 = time()
     end
 end;
 function masterˈs_loop(ref, timestamp, inbox)
     v, i = fill(0, J), 0
     snap = getfield(ref, :x)
+    foreach(empty!, tnt)
+    t0_0 = t0 = time()
     while true
         if isempty(inbox) # no event happens
+            dt = time() - t0
+            dt > 2700 && error("masterˈs_loop have run $dt seconds")
+            if time() - t0_0 > 5
+                j_stuck = findfirst(j -> j ∉ view(v, 1:i), 1:J)
+                if is_inn_solving_vec[j_stuck]
+                    Gurobi.GRBterminate(JuMP.backend(inn[j_stuck]))
+                    printstyled("\nWarning: manually interrupting inn[$j_stuck]..."; color = :reverse)
+                    while is_inn_solving_vec[j_stuck] yield() end
+                    printstyled("\rWarning: manually interrupt inn[$j_stuck]: Success"; color = :reverse)
+                    t0_0 = time()
+                end
+            end
             yield()
             continue
         end # ∀ j, we have j ∈ buffer ∪ inbox ∪ js_at_large
@@ -357,10 +386,10 @@ function masterˈs_loop(ref, timestamp, inbox)
         while true
             lens = @lock inbox_lock pop!(inbox)
             j, (cut_off_by_j, ø), con, ver = lens(snap)
-            ismissing(con) && error("Subproblem $j terminates with $ø")
+            ismissing(con) && error("Subproblem $j terminates with $ø and PrimalStatus $cut_off_by_j")
             if cut_off_by_j
                 _, _, up = JuMP.add_constraint(model, con), push!(VCG[j], ver), true
-                println("▶ ub = $(snap.ub) | t = $(snap.t), j = $j | vio = $ø")
+                print("\r▶ ub = $(snap.ub) | t = $(snap.t), j = $j | vio = $ø | $(ceil(Int, time() - t0)) sec")
             end
             v[i+=1] = j # write the buffer
             isempty(inbox) && break
@@ -370,9 +399,9 @@ function masterˈs_loop(ref, timestamp, inbox)
             timestamp, snap = shot!(timestamp)
             setfield!(ref, :x, snap)
             for j = view(v, 1:i) Threads.@spawn subproblemˈs_duty(j, ref, inbox) end
-            i = 0
+            i, t0_0 = 0, time()
         elseif i == J
-            println("▶▶▶ No more progress can be made, quit!")
+            printstyled("▶▶▶ No more progress can be made, quit!\n"; color = :cyan)
             return
         end
     end
@@ -432,22 +461,6 @@ function build_prm!(model)
     return Y
 end;
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 ###############################################################
 #
 # This .jl file can generate test data, which is embodied by
@@ -466,9 +479,9 @@ let
 end
 ###############################################################
 
-const K = 1;
-const LOGIS = 255;
-Random.seed!(932457435072);
+const K = 40;
+const LOGIS = 256;
+Random.seed!(my_seed);
 
 const J = (K)LOGIS;
 const GRB_ENV = Gurobi.Env();
@@ -477,9 +490,9 @@ const (Rng1, Rng2) = get_pair_and_self_Rng(J);
 const (C, O) = get_C_and_O(); # price and Celsius vector
 const D, X = NamedTuple[], NamedTuple[];
 
-VALIDITY_CHECK_MODE::Int = 1
+VALIDITY_CHECK_MODE::Int = 0
 if VALIDITY_CHECK_MODE == 1
-    model = JuMP.Model(() -> Gurobi.Optimizer(GRB_ENV)) # Monolithic Gurobi One Shot
+    model = JuMP.direct_model(Gurobi.Optimizer(GRB_ENV)) # Monolithic Gurobi One Shot
     fill_model_D_X!(model, D, X)
     e = JuMP.@variable(model);
     JuMP.@expression(model, pA, sum(X[j].pBus_1 + X[j].pBus_2 for j = Rng1) + sum(X[j].pBus for j = Rng2));
@@ -504,7 +517,7 @@ if VALIDITY_CHECK_MODE == 1
     @info "Do the 3rd optimize! with cooling sending, you should WAIT until a feasible solution"
     JuMP.optimize!(model)
     const Q_A::Vector{Int} = get_Q_A(model)
-    JuMP.@constraint(model, qA ≤ Q_A)
+    JuMP.@constraint(model, qA .≤ Q_A)
     @info "Do the 4th optimize! with power-limited cooling, you should WAIT until a feasible solution"
     JuMP.optimize!(model)
     const E_Q::Int = get_E_Q(model)
@@ -515,6 +528,7 @@ if VALIDITY_CHECK_MODE == 1
 else # DW algorithm
     const COT = 0.5/J;
     const inbox_lock = Base.ReentrantLock();
+    const is_inn_solving_vec = falses(J);
     const inn = [get_honest_model() for j = 1:J];
     const VCG = [NamedTuple[] for _ = 1:J]; # collect the Vertices found in the CG algorithm
     const model, θ, β = initialize_out(30J); # ⚠️⚠️⚠️
@@ -528,9 +542,18 @@ end
 
 ############################################################
 
+const tnt = (master = Float64[], pair = Float64[], self = Float64[]) # wordload distribution analysis
 warm_up()
+
+t0 = time()
 masterˈs_algorithm()
+printstyled("Dual Opt time = $(time()-t0)\n"; color = :cyan)
 _, snap = shot!(0) # snap.ub stores the Lagrangian bound
+
+map(maximum, tnt)
+map(Statistics.mean, tnt)
+map(Statistics.median, tnt)
+map(sum, tnt)
 
 ############################################################
 
@@ -538,16 +561,13 @@ _, snap = shot!(0) # snap.ub stores the Lagrangian bound
 
 ############################################################
 
-const prm = JuMP.Model(() -> Gurobi.Optimizer(GRB_ENV)); 
+const prm = JuMP.direct_model(Gurobi.Optimizer(GRB_ENV));
+JuMP.set_attribute(prm, "Threads", 8)
 const Y = build_prm!(prm);
 JuMP.optimize!(prm)
+printstyled("Primal Opt time = $(JuMP.solve_time(prm))"; color = :cyan)
 JuMP.termination_status(prm) == JuMP.OPTIMAL || error("fails");
 JuMP.objective_value(prm) # The P_AGR should be higher than this value
-
-
-
-
-
 
 ################################################################################
 
