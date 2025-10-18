@@ -273,7 +273,7 @@ function subproblemˈs_duty(j, ref, inbox)
     mj = inn[j]
     JuMP.@objective(mj, Min, bilin_expr(j, identity, s.β))
     setindex!(is_inn_solving_vec, true, j); JuMP.optimize!(mj); setindex!(is_inn_solving_vec, false, j)
-    push!(getfield(tnt, ifelse(j in Rng1, :pair, :self)), JuMP.solve_time(mj))
+    @lock tnt_lock push!(getfield(tnt, ifelse(j in Rng1, :pair, :self)), JuMP.solve_time(mj))
     ps, ts = JuMP.primal_status(mj), JuMP.termination_status(mj)
     lens = if ps != JuMP.FEASIBLE_POINT || ts ∉ [JuMP.OPTIMAL, JuMP.INTERRUPTED]
         function(s); j, (ps, ts), missing, missing end # to be thrown
@@ -321,7 +321,7 @@ end;
 function shot!(timestamp)
     JuMP.optimize!(model)
     JuMP.termination_status(model) == JuMP.OPTIMAL || error("$(JuMP.termination_status(model))")
-    push!(tnt.master, JuMP.solve_time(model))
+    @lock tnt_lock push!(tnt.master, JuMP.solve_time(model))
     snap = (t = timestamp += 1, θ = ı.(θ), β = ı.(β), ub = JuMP.objective_bound(model))
     timestamp, snap
 end;
@@ -334,7 +334,7 @@ function warm_up()
     t0_0 = time()
     while true
         if isempty(inbox)
-            if time() - t0_0 > 2.2
+            if time() - t0_0 > 5
                 j_stuck = first(js_remains)
                 if is_inn_solving_vec[j_stuck]
                     Gurobi.GRBterminate(JuMP.backend(inn[j_stuck]))
@@ -479,8 +479,8 @@ let
 end
 ###############################################################
 
-const K = 40;
-const LOGIS = 256;
+const K = 7;
+const LOGIS = 7;
 Random.seed!(my_seed);
 
 const J = (K)LOGIS;
@@ -542,6 +542,7 @@ end
 
 ############################################################
 
+const tnt_lock = Base.ReentrantLock();
 const tnt = (master = Float64[], pair = Float64[], self = Float64[]) # wordload distribution analysis
 warm_up()
 
