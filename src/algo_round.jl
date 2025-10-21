@@ -3,17 +3,17 @@ import JuMP.value as ı
 import LinearAlgebra.⋅ as ⋅
 import Statistics, Random, Printf
 
-const GRB_ENV = Gurobi.Env();
-const my_seed = 35;
-const K = 17;
+# This is a experimental algorithm (round check)
+# but the performance is slower than the inbox algorithm
+# so do not use struct any longer
+# and don't pursue type accuracy
+# use primitive types is sufficient (nt, functions)
+
+# but the some thoughts are valueble: you don't need an initial artificial bound
+# you just manually gives a (evenly spread) trial point
+# and collect the first round of cuts to make the master problem bounded
 
 abstract type Vertex end
-const SUBTHR = Threads.nthreads() - 1;
-const IMAX = typemax(Int)
-const NORMALTTST = (JuMP.OPTIMAL, JuMP.INTERRUPTED)
-const Con = JuMP.ScalarConstraint{JuMP.AffExpr, JuMP.MOI.LessThan{Float64}};
-const CONVACANT::Con = JuMP.@build_constraint(zero(JuMP.AffExpr) ≤ -1.0); # initial placeholder, or vacant
-♭(x) = round(Bool, ı(x));
 struct Vertexs <: Vertex
     bEV::Vector{Bool}
     bU::Matrix{Bool}
@@ -42,6 +42,32 @@ struct Vertexp <: Vertex
         Vector{Float64}(undef, T)
     )
 end;
+struct Snap
+    t::Float64
+    ub::Float64
+    θ::Vector{Float64}
+    β::Vector{Float64}
+    Snap(t, ub) = new(t, ub, Vector{Float64}(undef, J), Vector{Float64}(undef, T))
+end;
+macro get_int_decision(model, expr) return esc(quote
+    let e = JuMP.@expression($model, $expr), a
+        a = map(_ -> JuMP.@variable($model, integer = true), e)
+        JuMP.@constraint($model, a .== e)
+        a
+    end
+end) end;
+♭(x) = round(Bool, ı(x));
+function newver(j)
+    x = X[j]
+    if j in Rng1
+        _, U1 = size(x.bU_1)
+        T, U2 = size(x.bU_2)
+        Vertexp(T, U1, U2)
+    else
+        T, U = size(x.bU)
+        Vertexs(T, U)
+    end
+end;
 function fillvertex!(v::Vertexs, x)
     @. v.bEV = ♭(x.bEV)
     @. v.bU = ♭(x.bU)
@@ -58,24 +84,17 @@ function fillvertex!(v::Vertexp, x)
     @. v.pBus = ı(x.pBus)
     nothing
 end;
-macro get_int_decision(model, expr) return esc(quote
-    let e = JuMP.@expression($model, $expr), a
-        a = map(_ -> JuMP.@variable($model, integer = true), e)
-        JuMP.@constraint($model, a .== e)
-        a
-    end
-end) end;
-function get_prob_decision(model, v::Vector)
-    I = length(v)
-    x = JuMP.@variable(model, [1:I], lower_bound = 0)
-    JuMP.@constraint(model, sum(x) == 1)
-    x
-end;
 function get_simple_model()
     m = JuMP.direct_model(Gurobi.Optimizer(GRB_ENV))
     JuMP.set_silent(m)
     JuMP.set_attribute(m, "Threads", 1)
     m
+end;
+function get_prob_decision(model, v::Vector)
+    I = length(v)
+    x = JuMP.@variable(model, [1:I], lower_bound = 0)
+    JuMP.@constraint(model, sum(x) == 1)
+    x
 end;
 function get_C_and_O()
     C = [
@@ -210,7 +229,54 @@ function add_circuit_breaker_pair_module!(model, P_BUS_1, P_BUS_2, p_ES, G, pLen
     JuMP.@constraint(model, pBus_2 .≥ pEV_2 + pU_2 + pAC_2 + D_2)
     pBus, pBus_1, pBus_2
 end;
-###############################################################
+bilin_expr(j, iˈı::Function, β) = JuMP.@expression(model, sum(iˈı(p)b for (b, p) = zip(β, X[j].pBus)));
+function subproblemˈs_duty(j, ref)  # 0, stuck or quitted
+    s = getfield(ref, :x)           # 1. quitted: Error quit vs Normal quit
+    mj = inn[j]                     # 2. Normal quit: Can or Cannot provide a cut
+    JuMP.@objective(mj, Min, bilin_expr(j, identity, s.β))
+    JuMP.optimize!(mj)              # 3. Provide cut: Can or Cannot cut off
+    ts = JuMP.termination_status(mj)
+    ts ∈ NORMALTTST || error("subproblem j=$j terminate with $ts")
+    JuMP.primal_status(mj) == JuMP.FEASIBLE_POINT || return
+    ver = newver(j)
+    fillvertex!(ver, X[j])
+    ver_vec[j] = ver # a by-product
+    con_vec[j] = JuMP.@build_constraint(θ[j] ≤ bilin_expr(j, ı, β))
+    fun_vec[j] = function(s) # master should try this!
+        vio_degree = s.θ[j] - bilin_expr(j, ı, s.β)
+        vio_degree > COT, vio_degree
+    end
+    return
+end;
+function initialize_out(an_UB)
+    model = get_simple_model()
+    JuMP.@variable(model, β[1:T] ≥ 0)
+    JuMP.@constraint(model, sum(β) == 1) # ⚠️ special
+    JuMP.@variable(model, θ[1:J])
+    JuMP.@expression(model, out_obj_tbMax, sum(θ))
+    JuMP.@objective(model, Max, out_obj_tbMax)
+    # JuMP.@constraint(model, out_obj_tbMax ≤ an_UB)
+    model, θ, β
+end;
+function initialize_snap(an_UB)
+    snap = Snap(0.0, Inf)
+    snap.β .= 1/T
+    snap.θ .= an_UB / J
+    snap
+end;
+function add_to_masterˈs_duty(j)
+    @lock mst_lock begin
+        push!(VCG[j], ver_vec[j])
+        JuMP.add_constraint(model, con_vec[j]) # should NOT do a solve next, which is slow
+    end
+    con_vec[j] = CONVACANT
+end;
+function shot!() # call this only after `model` is solved to OPTIMAL, and only when needed
+    snap = Snap(JuMP.solve_time(model), JuMP.objective_bound(model))
+    @. snap.θ = ı(θ)
+    @. snap.β = ı(β)
+    snap
+end;
 function get_a_paired_block(O)::NamedTuple
     model = get_simple_model() # for a block who has a lender and a borrower house
     # 6 lines
@@ -302,7 +368,7 @@ function add_a_self_block!(model, d::NamedTuple)::NamedTuple
     pBus = add_self_circuit_breaker_module!(model, d.P_BUS, d.D, pU, pEV, pAC)
     (;pBus, bEV, bU, q)
 end;
-function fill_model_D_X!(v::Vector, X)
+function fill_model_X!(v::Vector, X)
     z = Threads.Atomic{Int}(J)
     f = function(j)
         p = j ∈ Rng1
@@ -334,149 +400,9 @@ function fill_model_D_X!(v::Vector, X)
     end
     return foreach(wait, tasks)
 end;
-function initialize_out(an_UB)
-    model = get_simple_model()
-    JuMP.@variable(model, β[1:T] ≥ 0)
-    JuMP.@constraint(model, sum(β) == 1) # ⚠️ special
-    JuMP.@variable(model, θ[1:J])
-    JuMP.@expression(model, out_obj_tbMax, sum(θ))
-    JuMP.@objective(model, Max, out_obj_tbMax)
-    JuMP.@constraint(model, out_obj_tbMax ≤ an_UB)
-    return model, θ, β
-end;
-function newver(j)
-    x = X[j]
-    if j in Rng1
-        _, U1 = size(x.bU_1)
-        T, U2 = size(x.bU_2)
-        Vertexp(T, U1, U2)
-    else
-        T, U = size(x.bU)
-        Vertexs(T, U)
-    end
-end;
-bilin_expr(j, iˈı::Function, β) = JuMP.@expression(model, sum(iˈı(p)b for (b, p) = zip(β, X[j].pBus)));
-function subproblemˈs_duty(j, ref)  # 0, stuck or quitted
-    s = getfield(ref, :x)           # 1. quitted: Error quit vs Normal quit
-    mj = inn[j]                     # 2. Normal quit: Can or Cannot provide a cut
-    JuMP.@objective(mj, Min, bilin_expr(j, identity, s.β))
-    JuMP.optimize!(mj)              # 3. Provide cut: Can or Cannot cut off
-    ts = JuMP.termination_status(mj)
-    ts ∈ NORMALTTST || error("subproblem j=$j terminate with $ts")
-    JuMP.primal_status(mj) == JuMP.FEASIBLE_POINT || return
-    ver = newver(j)
-    fillvertex!(ver, X[j])
-    ver_vec[j] = ver # a by-product
-    con_vec[j] = JuMP.@build_constraint(θ[j] ≤ bilin_expr(j, ı, β))
-    fun_vec[j] = function(s) # master should try this!
-        vio_degree = s.θ[j] - bilin_expr(j, ı, s.β)
-        vio_degree > COT, vio_degree
-    end
-    return
-end;
-function shot!()
-    JuMP.optimize!(model)
-    ts = JuMP.termination_status(model)
-    ts == JuMP.OPTIMAL || error("master LP terminate with $ts") 
-    (θ = ı.(θ), β = ı.(β), ub = JuMP.objective_bound(model), t = JuMP.solve_time(model)) # snap
-end;
-function warm_up()
-    tm0 = time()
-    snap = shot!()
-    for j = 1:J # lazy loop---depending totally on Gurobi's behavior
-        subproblemˈs_duty(j, Ref(snap))
-        con_vec[j] === CONVACANT && error("983479324760")
-        is_vio, vio = fun_vec[j](snap)
-        Printf.@printf "\rwarm_up> ub = %e, j=%5i, vio = %e, %.0f sec" snap.ub j vio time()-tm0
-        if is_vio
-            JuMP.add_constraint(model, con_vec[j]), push!(VCG[j], ver_vec[j])
-            snap = shot!()
-        end
-        con_vec[j] = CONVACANT
-    end
-end
-function wait_until_any_task_is_done_normally(seq)
-    while true
-        i = 0
-        for j = seq
-            if istaskdone(tsk_vec[j])
-                i = j
-                break
-            end
-        end
-        if i !== 0
-            wait(tsk_vec[i])
-            return
-        end
-        yield()
-    end
-end;
-function masterˈs_algorithm()
-    vnv, tm0 = fill(0, J), time()
-    S0, js_remains = Set(1:J), Set(1:J)
-    snap = shot!()
-    ref = Ref(snap) 
-    broadcast!(j -> Threads.@spawn(subproblemˈs_duty(j, ref)), tsk_vec, 1:J)
-    tMean = 0.0
-    tMax = 0.0
-    Nsnap = 0
-    t0 = time()
-    while true
-        broadcast!(length, vnv, VCG)
-        wait_until_any_task_is_done_normally(sortperm(vnv))
-        has_vio = false
-        v, i = fill(0, J), 0
-        while true # colloct, for one round
-            vn, j = findmin(vnv)
-            vn === IMAX && break # [this round is over]
-            t = tsk_vec[j]
-            if istaskdone(t)
-                istaskdone(t) || continue
-                istaskfailed(t) && error(wait(t))
-                if con_vec[j] !== CONVACANT # a (cut + ver + fun) is available
-                    is_vio, vio = fun_vec[j](snap)
-                    if is_vio
-                        has_vio, _, _ = true, JuMP.add_constraint(model, con_vec[j]), push!(VCG[j], ver_vec[j])
-                        Printf.@printf("\rmaster> ub = %e | j = %i | vio = %e | Ncut = %7i | tMean = %e | tMax = %.0f | Nsnap = %7i | %.0f sec",
-                            snap.ub,
-                            j,
-                            vio,
-                            mapreduce(length, +, VCG),
-                            tMean,
-                            tMax,
-                            Nsnap,
-                            time()-tm0
-                        )
-                    end
-                    con_vec[j] = CONVACANT # recover!
-                end
-                v[i+=1] = j # keep hold of this returned task
-                if has_vio && i === SUBTHR
-                    broadcast!(length, vnv, VCG) # recover!
-                    break # [early break]
-                end
-            end
-            vnv[j] = IMAX # mutate!
-        end      
-        if has_vio
-            snap = shot!()
-            setfield!(ref, :x, snap)
-            tMean, Nsnap, tMax = ((Nsnap)tMean + snap.t) / (1 + Nsnap), Nsnap + 1, max(tMax, snap.t)
-            js = view(v, 1:i)
-            broadcast!(j -> Threads.@spawn(subproblemˈs_duty(j, ref)), view(tsk_vec, js), js)
-            t0 = time() # still making progress
-        elseif i == J
-            printstyled("▶▶▶ all tasks received in a collect session without making progress, quit!\n"; color = :cyan)
-            return
-        elseif time() - t0 > 10
-            printstyled("master> Long time no progress, return directly"; color = :yellow)
-            return
-        end
-    end
-end;
 function primal_recovery(model)
-    JuMP.unset_silent(model)
     JuMP.set_attribute(model, "Threads", 8)
+    JuMP.unset_silent(model)
     l = map(v -> get_prob_decision(model, v), VCG)
     Y = [j ∈ Rng1 ? (
         bES = @get_int_decision(model, sum((t.bES)l for (l, t) = zip(l[j], VCG[j]))),
@@ -498,33 +424,141 @@ function primal_recovery(model)
     printstyled("Primal Opt time = $(JuMP.solve_time(model))"; color = :cyan)
     JuMP.termination_status(model) == JuMP.OPTIMAL || error("fails")
     JuMP.objective_value(model)
-end
+end;
+function warm_up()
+    tm0 = time()
+    broadcast!(j -> Threads.@spawn(subproblemˈs_duty(j, snp_ref)), tsk_vec, 1:J)
+    b = fill(true, J)
+    while true
+        for j = 1:J
+            if b[j]
+                t = tsk_vec[j]
+                if istaskdone(t)
+                    wait(t)
+                    b[j] = false
+                    if con_vec[j] === CONVACANT
+                        error("TODO: no cut feedback initially")
+                    else
+                        tsk_mst[j] = Threads.@spawn(add_to_masterˈs_duty(j))
+                        Printf.@printf("\rwarm_up> rest = %6i, j = %6i | %.0f sec", count(b), j, time() - tm0)
+                    end
+                end
+            end
+        end
+        any(b) || break
+        @lock mst_lock JuMP.optimize!(model) # in place of yield()
+    end
+    print("\nwarm_up> waiting for master's duties...")
+    foreach(wait, tsk_mst)
+    JuMP.optimize!(model)
+    JuMP.termination_status(model) == JuMP.OPTIMAL || error("master maybe still unbounded, check it")
+    println("\rwarm_up> $(mapreduce(length, +, VCG)) cuts added, J = $J, time = $(time() - tm0)")
+end;
 
+function main()
+    vnv, tm0 = Vector{Int}(undef, J), time()
+    snap = shot!()
+    setfield!(snp_ref, :x, snap)
+    broadcast!(j -> Threads.@spawn(subproblemˈs_duty(j, snp_ref)), tsk_vec, 1:J)
+    b = Vector{Bool}(undef, J) # allocate once
+    v = Vector{Int}(undef, J) # record the went-back tasks, indexed by i
+    m = Vector{Int}(undef, J) # record the violating tasks, indexed by k
+    cn = round = 0
+    t0 = time()
+    while true
+        broadcast!(length, vnv, VCG)
+        i = 0 # used for collecting tasks went back, into `v`
+        k = 0 # used for collecting violating tasks went back, into `m`
+        while true
+            vn, j = findmin(vnv)
+            vn === IMAX && break # [this round is over]
+            t = tsk_vec[j]
+            if istaskdone(t)
+                wait(t)
+                if con_vec[j] !== CONVACANT # a (cut + ver + fun) is available
+                    is_vio, vio = fun_vec[j](snap)
+                    if is_vio
+                        tsk_mst[j] = Threads.@spawn(add_to_masterˈs_duty(j)) # if you want to re-Send a task to Block j, you MUST wait for THIS tsk
+                        Printf.@printf("\rmain> round = %4i, ub = %.0f, j = %6i, vio = %e, #Cut = %8i | %.0f sec", round, snap.ub, j, vio, cn+=1, time()-tm0)
+                        m[k+=1] = j
+                    end
+                end
+                v[i+=1] = j
+            end
+            vnv[j] = IMAX # do not focus on this block again for this round
+        end
+        round += 1
+        if k !== 0 # has violation
+            a = view(b, 1:k) # lightweight
+            fill!(a, true)
+            while true # wait for master's aux tasks to finish, AND do part-time jobs
+                for i = 1:k
+                    if a[i]
+                        j = m[i]
+                        t = tsk_mst[j]
+                        if istaskdone(t)
+                            wait(t)
+                            a[i] = false
+                        end
+                    end
+                end
+                any(a) || break
+                @lock mst_lock JuMP.optimize!(model) # in place of yield()
+            end
+            JuMP.optimize!(model)
+            JuMP.termination_status(model) == JuMP.OPTIMAL || error("master maybe still unbounded, check it")
+            snap = shot!()
+            setfield!(snp_ref, :x, snap)
+            js = view(v, 1:i)
+            broadcast!(j -> Threads.@spawn(subproblemˈs_duty(j, snp_ref)), view(tsk_vec, js), js) # re-Send
+            t0 = time() # still making progress
+        elseif i === J
+            printstyled("main> all tasks returned in a round are not enriching, quit!\n"; color = :cyan)
+            return
+        elseif time() - t0 > 10
+            printstyled("main> Long time no progress, quit. If solution quality inadequate, enlarge the time threshold\n"; color = :yellow)
+            return
+        end
+    end
+end;
+
+const my_seed = 44;
 Random.seed!(my_seed);
-const J = (K)SUBTHR;
-const T = 24;
+
+const J = 45 * 253;
+const GRB_ENV = Gurobi.Env();
 const (Rng1, Rng2) = get_pair_and_self_Rng(J);
-const (C, O) = get_C_and_O(); # price and Celsius vector
-const X = Vector{NamedTuple}(undef, J);
-const COT = 0.5/J;
-const inbox_lock = Base.ReentrantLock();
-const inn = [get_simple_model() for j = 1:J];
-const model, θ, β = initialize_out(30J); # ⚠️⚠️⚠️
-const insset = Set{JuMP.Model}()
-const insset_lock = Base.ReentrantLock();
-fill_model_D_X!(inn, X) # This must only be here
 const VCG = map(j -> Vector{ifelse(j in Rng1, Vertexp, Vertexs)}(undef, 0), 1:J); # this is the real depot
+const T = 24;
+const COT = 0.5/J;
+const (C, O) = get_C_and_O(); # price and Celsius vector
+const IMAX = typemax(Int);
+const NORMALTTST = (JuMP.OPTIMAL, JuMP.INTERRUPTED);
+const insset = Set{JuMP.Model}();
+const insset_lock = ReentrantLock();
+const Con = JuMP.ScalarConstraint{JuMP.AffExpr, JuMP.MOI.LessThan{Float64}};
+const CONVACANT::Con = JuMP.@build_constraint(zero(JuMP.AffExpr) ≤ -1.0); # initial placeholder, or vacant
+const X = Vector{NamedTuple}(undef, J);
+const inn = [get_simple_model() for j = 1:J];
+fill_model_X!(inn, X)
+
 const ver_vec = map(newver, 1:J); # this is a temporary depot
 const con_vec = fill(CONVACANT, J); 
 const fun_vec = Vector{Function}(undef, J);
-const tsk_vec = Vector{Task}(undef, J);
+const tsk_vec = Vector{Task}(undef, J); # for the blocks
+const tsk_mst = Vector{Task}(undef, J); # for the master
 
+const mst_lock = ReentrantLock();
+const prm = get_simple_model();
+const model, θ, β = initialize_out(30J); # ⚠️⚠️⚠️
+const snp_ref = Ref{Snap}(initialize_snap(30J)); # for the snap
 
 warm_up() # just directly do this, do _not_ need a `foreach(optimize!, inn)` pre-warm_up
-masterˈs_algorithm()
 
-const prm = get_simple_model();
+main()
+
 snap = shot!()
 ub = primal_recovery(prm);
 lb = snap.ub
 ub - lb
+
