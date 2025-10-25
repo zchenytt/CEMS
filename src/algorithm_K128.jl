@@ -422,7 +422,7 @@ map(f -> f(main_task), (istaskdone, istaskfailed))
 # Nonetheless, we can derive a valid lower bound (to the original MIP), by calculating the _exact_ ObjVals of `inn` vector
 
 ##########################################################
-function subproblemˈs_optimal_objval(j; ref = ref, inn = inn)
+function subproblemˈs_optimal_objval!(pvv, j; ref = ref, inn = inn)
     mj = inn[j]
     JuMP.set_attribute(mj, "TimeLimit", 24*3600)
     s = getfield(ref, :x)
@@ -430,18 +430,13 @@ function subproblemˈs_optimal_objval(j; ref = ref, inn = inn)
     JuMP.optimize!(mj)
     ts = JuMP.termination_status(mj)
     ts === JuMP.OPTIMAL || error("j = $j, terminate = $ts")
-    JuMP.objective_value(mj)
+    pvv[j] = JuMP.objective_value(mj)
 end;
-function get_pvv() # primal value vector, which is the OBJVAL counterpart of the θ vector
-    pvv = Vector{Float64}(undef, J);
-    Threads.@threads for j = 1:J
-        print("\r primal_recover> j = $j / $J = J, MIP calculating via th = $(Threads.threadid())")
-        pvv[j] = subproblemˈs_optimal_objval(j)
-    end
-    pvv
-end;
-pvv = get_pvv();
+pvv = Vector{Float64}(undef, J); # primal value vector, which is the OBJVAL counterpart of the θ vector
+fill_pvv_tasks = map(j -> Threads.@spawn(subproblemˈs_optimal_objval!(pvv, j)), 1:J);
+t = time(); foreach(wait, fill_pvv_tasks); time() - t # 114.3507239818573
 ub = ref.x.ub.x # 390724.7612921933
 lb = sum(pvv) # 390699.11541988095 ⚠️ The expression is problem-dependent, there is a common_part in general
 agap = ub - lb # result agap of the convex CTPLN problem
 rgap = agap / lb # 6.564097869738892e-5, i.e. less than 0.01%
+
