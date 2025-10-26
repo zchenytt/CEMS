@@ -404,7 +404,8 @@ function main(; J = J, ref = ref, model = model, MAIN_TIME_LIMIT = MAIN_TIME_LIM
                 tasks[j] = Threads.@spawn(subproblemˈs_duty($j; update_snap = true))
             end
             j = next(j, J) # go to ask the next block
-        end      
+        end
+        GC.safepoint()
     end
 end;
 const proceed_main = Ref(true);
