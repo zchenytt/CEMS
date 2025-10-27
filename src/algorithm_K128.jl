@@ -4,6 +4,14 @@ import Random           # my std test case: seed = 44, K = 45, THREAD_FOR_BLOCKS
 const my_seed = 2;
 Random.seed!(my_seed);
 
+# TODO
+# 1. make sure the training is resumable
+# 2. make the 3 hyperparameters: T, R1R2ratio, J
+# 3. add the vertex push! module
+# 4. add the primal recover module
+# 5. add the data "D" so that they can be used to build a centralized model, so that all results can be compared.
+# 6. add statistic and plot module
+
 const K = 2;           # controls the problem scale
 const GRB_ENV = Gurobi.Env();
 const DEFAULT_THREADS = Threads.nthreads();  # Hardware Dependent
