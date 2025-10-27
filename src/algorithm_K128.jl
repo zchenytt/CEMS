@@ -5,14 +5,13 @@ const my_seed = 2;
 Random.seed!(my_seed);
 
 # TODO
-# 1. make sure the training is resumable
 # 2. make the 3 hyperparameters: T, R1R2ratio, J
 # 3. add the vertex push! module
 # 4. add the primal recover module
 # 5. add the data "D" so that they can be used to build a centralized model, so that all results can be compared.
 # 6. add statistic and plot module
 
-const K = 2;           # controls the problem scale
+const K = 10;           # controls the problem scale
 const GRB_ENV = Gurobi.Env();
 const DEFAULT_THREADS = Threads.nthreads();  # Hardware Dependent
 const THREAD_FOR_MAIN_LOOP = 1;
@@ -373,6 +372,8 @@ const insset_lock = ReentrantLock();
 const MAIN_TIME_LIMIT = 2700;
 const LOG_TIME = 7; 
 const Ncuts = Threads.Atomic{Int}(0);
+const proceed_main = Ref(true);
+
 
 fill_model_D_X!(inn, X) # build the J blocks in parallel
 foreach(mj -> JuMP.set_objective_sense(mj, JuMP.MIN_SENSE), inn)
@@ -395,7 +396,7 @@ function mainlog(tasks, ref, Ncuts, tabs0)
     t = round(Int, time() - tabs0) 
     println("main> N_BlockTasks_Away = $a, ub = $ub, Ncuts = $n, $t sec")
 end;
-function main(; J = J, ref = ref, model = model, MAIN_TIME_LIMIT = MAIN_TIME_LIMIT, LOG_TIME = LOG_TIME, Ncuts = Ncuts)
+function main(; proceed_main = proceed_main, J = J, ref = ref, model = model, MAIN_TIME_LIMIT = MAIN_TIME_LIMIT, LOG_TIME = LOG_TIME, Ncuts = Ncuts)
     tabs0 = time(); tabs1 = tabs0 + MAIN_TIME_LIMIT # Time control region, do NOT move this line
     #################################################
     Ncuts0 = Ncuts.value
@@ -427,7 +428,8 @@ function main(; J = J, ref = ref, model = model, MAIN_TIME_LIMIT = MAIN_TIME_LIM
         GC.safepoint()
     end
 end;
-const proceed_main = Ref(true);
+foreach(mj -> JuMP.set_attribute(mj, "TimeLimit", 45), inn)
+setfield!(proceed_main, :x, true)
 main_task = Threads.@spawn(main());
 
 # manual interrupt
