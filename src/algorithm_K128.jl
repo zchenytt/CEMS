@@ -1,10 +1,10 @@
 import JuMP, Gurobi
 import JuMP.value as ı
 import Random           # my std test case: seed = 44, K = 45, THREAD_FOR_BLOCKS = 253, so J = 11385
-const my_seed = 44;
+const my_seed = 2;
 Random.seed!(my_seed);
 
-const K = 128;           # controls the problem scale
+const K = 2;           # controls the problem scale
 const GRB_ENV = Gurobi.Env();
 const DEFAULT_THREADS = Threads.nthreads();  # Hardware Dependent
 const THREAD_FOR_MAIN_LOOP = 1;
@@ -276,7 +276,7 @@ end;
 value!(X, m, x) = foreach(j -> scalar!(X, j, m, x), eachindex(X));
 function solve_mst_and_up_value!(m, s, θ, β)
     JuMP.optimize!(m)
-    JuMP.termination_status(m) == JuMP.OPTIMAL || error() # The LP should always be solved to OPTIMAL
+    JuMP.termination_status(m) === JuMP.OPTIMAL || error() # The LP should always be solved to OPTIMAL
     s.ub.x = JuMP.objective_bound(m)
     value!(s.β, m, β)
     value!(s.θ, m, θ)
@@ -318,6 +318,7 @@ function subproblemˈs_duty(j; Ncuts = Ncuts, initialize = false, update_snap = 
         JuMP.set_objective_function(mj, bilin_expr(j, identity, s.β))
         JuMP.optimize!(mj)
         ps, ts = JuMP.primal_status(mj), JuMP.termination_status(mj)
+        ts === JuMP.INTERRUPTED && error("let inn[j] stop")
         if ps !== JuMP.FEASIBLE_POINT || (ts !== JuMP.OPTIMAL && ts !== JuMP.TIME_LIMIT)
             JuMP.set_attribute(mj, "Seed", rand(0:2000000000))
             Threads.@spawn(:interactive, sublog(j))
@@ -334,6 +335,16 @@ function subproblemˈs_duty(j; Ncuts = Ncuts, initialize = false, update_snap = 
         Threads.atomic_add!(Ncuts, 1)
         return
     end
+end;
+function subproblemˈs_optimal_objval!(pvv, j; ref = ref, inn = inn)
+    mj = inn[j]
+    JuMP.set_attribute(mj, "TimeLimit", 24*3600)
+    s = getfield(ref, :x)
+    JuMP.set_objective_function(mj, bilin_expr(j, identity, s.β))
+    JuMP.optimize!(mj)
+    ts = JuMP.termination_status(mj)
+    ts === JuMP.OPTIMAL || error("j = $j, terminate = $ts")
+    pvv[j] = JuMP.objective_value(mj)
 end;
 
 const T = 24;
@@ -416,6 +427,7 @@ map(f -> f(main_task), (istaskdone, istaskfailed))
 setfield!(proceed_main, :x, false)
 map(f -> f(main_task), (istaskdone, istaskfailed))
 foreach(j -> Gurobi.GRBterminate(JuMP.backend(inn[j])), 1:J)
+Gurobi.GRBterminate(JuMP.backend(model))
 
 ##########################################################
 
@@ -424,16 +436,6 @@ foreach(j -> Gurobi.GRBterminate(JuMP.backend(inn[j])), 1:J)
 # Nonetheless, we can derive a valid lower bound (to the original MIP), by calculating the _exact_ ObjVals of `inn` vector
 
 ##########################################################
-function subproblemˈs_optimal_objval!(pvv, j; ref = ref, inn = inn)
-    mj = inn[j]
-    JuMP.set_attribute(mj, "TimeLimit", 24*3600)
-    s = getfield(ref, :x)
-    JuMP.set_objective_function(mj, bilin_expr(j, identity, s.β))
-    JuMP.optimize!(mj)
-    ts = JuMP.termination_status(mj)
-    ts === JuMP.OPTIMAL || error("j = $j, terminate = $ts")
-    pvv[j] = JuMP.objective_value(mj)
-end;
 pvv = Vector{Float64}(undef, J); # primal value vector, which is the OBJVAL counterpart of the θ vector
 fill_pvv_tasks = map(j -> Threads.@spawn(subproblemˈs_optimal_objval!(pvv, j)), 1:J);
 t = time(); foreach(wait, fill_pvv_tasks); time() - t # 114.3507239818573
@@ -441,4 +443,3 @@ ub = ref.x.ub.x # 390724.7612921933
 lb = sum(pvv) # 390699.11541988095 ⚠️ The expression is problem-dependent, there is a common_part in general
 agap = ub - lb # result agap of the convex CTPLN problem
 rgap = agap / lb # 6.564097869738892e-5, i.e. less than 0.01%
-
