@@ -415,6 +415,7 @@ main_task = Threads.@spawn(main());
 map(f -> f(main_task), (istaskdone, istaskfailed))
 setfield!(proceed_main, :x, false)
 map(f -> f(main_task), (istaskdone, istaskfailed))
+foreach(j -> Gurobi.GRBterminate(JuMP.backend(inn[j])), 1:J)
 
 ##########################################################
 
