@@ -1,11 +1,11 @@
 import JuMP, Gurobi, Random, Statistics
 import JuMP.value as ı
-const my_seed = 0;                  Random.seed!(hash(my_seed));
+const my_seed = 1;                  Random.seed!(hash(my_seed));
 const T = 24;
-const F = 4;         # ⚙️ if F = 1, all T is 24; if F = 4, (G)/(ES)/(C) adopts T = 96
-const K = 64;         # ⚙️ controls the problem scale
+const F = 1;         # ⚙️ if F = 1, all T is 24; if F = 4, (G)/(ES)/(C) adopts T = 96
+const K = 2;         # ⚙️ controls the problem scale
 const rho = 75/100;  # ⚙️ the proportion of the paired household
-const MAIN_TIME_LIMIT = 3600; # ⚙️ we don't adopt the "least time consumed to converge" concept, as we haven't adopt such a stopping cretarion
+const MAIN_TIME_LIMIT = 150; # ⚙️ we don't adopt the "least time consumed to converge" concept, as we haven't adopt such a stopping cretarion
 
 # TODO 
 # We restrict the training time of DW to be warm-only/5/15/25/45 respectively, and see if we can converge within 0.01%
@@ -376,7 +376,7 @@ function subproblemˈs_duty(j; selfblockrgap = selfblockrgap, selfblockrgap_lock
         JuMP.set_objective_function(mj, bilin_expr(j, identity, s.β))
         JuMP.optimize!(mj)
         ps, ts = JuMP.primal_status(mj), JuMP.termination_status(mj)
-        ts === JuMP.INTERRUPTED && error("let inn[j] stop to end the corresponding task")
+        ts === JuMP.INTERRUPTED && return
         if ps !== JuMP.FEASIBLE_POINT || (ts !== JuMP.OPTIMAL && ts !== JuMP.TIME_LIMIT)
             JuMP.set_attribute(mj, "Seed", rand(0:2000000000))
             Threads.@spawn(:interactive, sublog(j))
@@ -485,13 +485,11 @@ function mainlog(tasks, ref, Ncuts, tabs0)
     t = round(Int, time() - tabs0) 
     println("main> N_BlockTasks_Away = $a, ub = $ub, Ncuts = $n, $t sec")
 end;
-function main(; proceed_main = proceed_main, J = J, ref = ref, model = model, MAIN_TIME_LIMIT = MAIN_TIME_LIMIT, LOG_TIME = LOG_TIME, Ncuts = Ncuts)
+function main(mst_task_ref, tasks; proceed_main = proceed_main, J = J, ref = ref, model = model, MAIN_TIME_LIMIT = MAIN_TIME_LIMIT, LOG_TIME = LOG_TIME, Ncuts = Ncuts)
     tabs0 = time(); tabs1 = tabs0 + MAIN_TIME_LIMIT # Time control region, do NOT move this line
     #################################################
     Ncuts0 = Ncuts.value
     j = 1
-    mst_task = Threads.@spawn(shot!(ref))
-    tasks = map(_ -> Threads.@spawn(missing), 1:J)
     #################################################
     tlog0 = time() # Logging control region, do NOT move this line
     while proceed_main.x && time() < tabs1 # Run with a time limit, or you manually interrupt
@@ -499,11 +497,11 @@ function main(; proceed_main = proceed_main, J = J, ref = ref, model = model, MA
             Threads.@spawn(:interactive, mainlog(tasks, ref, Ncuts, tabs0))
             tlog0 = time()
         end
-        if istaskdone(mst_task)
+        if istaskdone(mst_task_ref.x)
             Ncuts_now = Ncuts.value
             if Ncuts_now !== Ncuts0 # detect if new cuts have been added to the master
                 if ntasksaway(tasks) < THREAD_FOR_BLOCKS
-                    mst_task = Threads.@spawn(shot!(ref)) # master's duty
+                    mst_task_ref.x = Threads.@spawn(shot!(ref)) # master's duty
                     Ncuts0 = Ncuts_now
                 end
             end
@@ -517,18 +515,28 @@ function main(; proceed_main = proceed_main, J = J, ref = ref, model = model, MA
         GC.safepoint()
     end
 end;
+function main(; J = J, ref = ref)
+    mst_task_ref = Ref(Threads.@spawn(shot!(ref)))
+    tasks = map(_ -> Threads.@spawn(missing), 1:J)
+    main_task = Threads.@spawn(main(mst_task_ref, tasks))
+    (main = main_task, master = mst_task_ref, blocks = tasks)
+end;
 foreach(mj -> JuMP.set_attribute(mj, "TimeLimit", 45), inn)
 setfield!(proceed_main, :x, true)
-main_task = Threads.@spawn(main());
+mainnt = main();
 
 ##########################################################
 # [manual interrupt]
 ##########################################################
-map(f -> f(main_task), (istaskdone, istaskfailed))
-setfield!(proceed_main, :x, false)
-map(f -> f(main_task), (istaskdone, istaskfailed))
-foreach(j -> Gurobi.GRBterminate(JuMP.backend(inn[j])), 1:J)
-Gurobi.GRBterminate(JuMP.backend(model))
+# setfield!(proceed_main, :x, false)
+# foreach(j -> Gurobi.GRBterminate(JuMP.backend(inn[j])), 1:J)
+# Gurobi.GRBterminate(JuMP.backend(model))
+ 
+##########################################################
+# [MUST DO THIS: wait for the main function to complete]
+##########################################################
+wait(mainnt.main); wait(mainnt.master.x); foreach(wait, mainnt.blocks)
+
 ##########################################################
 # [Statistics]
 ##########################################################
