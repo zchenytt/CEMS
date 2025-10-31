@@ -3,10 +3,10 @@ import JuMP.value as ı
 
 const K = 1;         # ⚙️ controls the problem scale
 const LOG_TIME = 1; 
-const my_seed = 0;                 Random.seed!(hash(my_seed));
+const my_seed = 3;                 Random.seed!(hash(my_seed));
 const T = 24;
-const Krho = 3;      # ⚙️ 1 or 3
-const F = 4;         # ⚙️ if F = 1, all T is 24; if F = 4, (G)/(ES)/(C) adopts T = 96
+const Krho = 1;      # ⚙️ 1 or 3
+const F = 1;         # ⚙️ if F = 1, all T is 24; if F = 4, (G)/(ES)/(C) adopts T = 96
 const rho = 25Krho/100;  
 const MAIN_TIME_LIMIT = 300; # ⚙️ we don't adopt the "least time consumed to converge" concept, as we haven't adopt such a stopping cretarion
 
@@ -411,7 +411,7 @@ end;
 
 const (Rng1, Rng2) = get_pair_and_self_Rng(J);
 const (C, O) = get_C_and_O(); # TODO [C also has a F = 4 version] price and Celsius vector
-const MaxVerNum = 100; # increase this if not sufficient
+const MaxVerNum = 150; # increase this if not sufficient
 const COT = 0.5/J;
 const an_UB = 30.0J
 const mst_lock = ReentrantLock();
@@ -516,12 +516,12 @@ Gurobi.GRBterminate(JuMP.backend(model))
 ##########################################################
 wait(mainnt.main); wait(mainnt.master.x); foreach(wait, mainnt.blocks)
 
-cg_time = 52;# 🟠
+cg_time = 19; # 🟠
 
 ##########################################################
 # [Statistics]
 ##########################################################
-maximum(K_VCG) < MaxVerNum || error("You must increase MaxVerNum");
+maximum(K_VCG) < MaxVerNum || printstyled("You must increase MaxVerNum"; color = :yellow);
 temp_f = v -> (minimum(v), Statistics.mean(v), maximum(v));
 Kverm, Kvermu, KverM = temp_f(K_VCG)
 msttimem, msttimemu, msttimeM = temp_f(mstsolvetime)
@@ -587,29 +587,41 @@ function primal_recovery(model) # do
     JuMP.optimize!(model)
     prec_time = JuMP.solve_time(model)
     printstyled("Primal Opt time = $prec_time"; color = :cyan)
-    JuMP.termination_status(model) == JuMP.OPTIMAL || error("fails")
+    JuMP.primal_status(model) === JuMP.FEASIBLE_POINT || error()
     prec_time, JuMP.objective_value(model)
 end;
-maximum(K_VCG) < MaxVerNum || error("You must increase MaxVerNum");
+maximum(K_VCG) < MaxVerNum || printstyled("You must increase MaxVerNum"; color = :yellow);
 foreach(j -> resize!(VCG[j], K_VCG[j]), 1:J)
 const prm = JuMP.direct_model(Gurobi.Optimizer(GRB_ENV));
 prec_time, ub = primal_recovery(prm);
+decen_time = cg_time + prec_time;
 ub
 lb
 agap = ub - lb # result agap of the convex CTPLN problem
-rgap = agap / lb # 6.564097869738892e-5, i.e. less than 0.01%
+decen_rgap = agap / lb # 6.564097869738892e-5, i.e. less than 0.01%
 
 ##########################################################
 # [Optional] Solve the centralized formulation
+# ✅ The prime purpose of the centralized algorithm is to prove
+# that the decentralized algorithm is effective, i.e. yield
+# _correct_ convergent values.
+# It is based on the CG+primal_recover algorithm: 
+# To achieve the same rgap, how many times of solve_time
+# is needed? We at most wait for 9 times of the base
+# solve_time of the CG+primal_recover
 ##########################################################
 const cen = JuMP.direct_model(Gurobi.Optimizer(GRB_ENV));
 JuMP.set_attribute(cen, "Threads", 4);
+JuMP.set_attribute(cen, "TimeLimit", 9 * decen_time); # if the gap is 
 build_cen!(D)
 JuMP.optimize!(cen)
 
+
 # Since the waiting time can be too long, we record one shot to facilitate comparing
-cen_time = 300 # 🟠
-cen_gap = Inf # 🟠
+cen_K = 11; # 🟠 valid numbers are 1-9
+# if the final rgap fails to beat the decen's counterpart,
+# if it finds a solution, we denote the number as 10
+# if it even fails to find a feasible solution, we denote the number as 11
 
 ##########################################################
 # save the results
@@ -617,9 +629,9 @@ cen_gap = Inf # 🟠
 function get_recap_nt()
     H = 2length(Rng1) + length(Rng2);
     S = my_seed
-    (; K, S, T, F, rho, J, H, cg_time, prec_time, cen_time, cen_gap, cg_rgap, rgap,
+    (; K, S, F, rho, J, H, cg_time, cg_rgap, decen_rgap, decen_time, cen_K,
     Kverm, Kvermu, KverM, msttimem, msttimemu, msttimeM, selfrgapm, selfrgapmu, selfrgapM, pairrgapm, pairrgapmu, pairrgapM)
 end;
 rnt = get_recap_nt()
 JLD2.@save  "K$(K)_F$(F)_KR$(Krho)_S$(my_seed).jld2" rnt
-
+"K$(K)_F$(F)_KR$(Krho)_S$(my_seed).jld2"
