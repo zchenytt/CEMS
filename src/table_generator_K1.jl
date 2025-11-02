@@ -598,7 +598,7 @@ decen_time = cg_time + prec_time;
 ub
 lb
 agap = ub - lb # result agap of the convex CTPLN problem
-decen_rgap = agap / lb # 6.564097869738892e-5, i.e. less than 0.01%
+decen_rgap = agap / ub # 6.564097869738892e-5, i.e. less than 0.01%
 
 ##########################################################
 # [Optional] Solve the centralized formulation
