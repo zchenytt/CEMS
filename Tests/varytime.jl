@@ -1,27 +1,34 @@
 const (K, F, Krho, my_seed) = map(a -> parse(Int, a), ARGS)
-# for F = (1, 4)
-#     "julia varytime.jl 64 $F 2 0" |> println
+# for S = 0:9, (F, Krho) = ((1, 3), (4, 1))
+#     "julia varytime.jl 64 $F $Krho $S" |> println
 # end
 println("$PROGRAM_FILE> (K, F, Krho, my_seed) = $((K, F, Krho, my_seed))")
-
-import JuMP, Gurobi, Random, Statistics, JLD2
+import Random; Random.seed!(hash(my_seed));
+import Gurobi; const GRB_ENV = Gurobi.Env();
+import JuMP, Statistics, JLD2
 import JuMP.value as ı
-
+scalar!(X, j, m, x) = (o = m.moi_backend; Gurobi.GRBgetdblattrelement(o, "X", Gurobi.c_column(o, JuMP.index(x[j])), view(X, j)));
+value!(X, m, x) = foreach(j -> scalar!(X, j, m, x), eachindex(X));
+get_simple_model() = (m = JuMP.direct_model(Gurobi.Optimizer(GRB_ENV)); JuMP.set_silent(m); JuMP.set_attribute(m, "Threads", 1); m);
+const DEFAULT_THREADS, THREAD_FOR_MAIN_LOOP, THREAD_FOR_MASTER = Threads.nthreads(:default), 1, 1;
+const THREAD_FOR_BLOCKS = DEFAULT_THREADS - THREAD_FOR_MAIN_LOOP - THREAD_FOR_MASTER;
+const J, T, rho = (K)THREAD_FOR_BLOCKS, 24, 25/100 * Krho;
 const LOG_TIME = 15; 
-const T = 24;
-const rho = 25Krho/100;  
-
-abstract type Vertex end
+const mstsolvetime, pairblockrgap, selfblockrgap = Float64[], Float64[], Float64[];
+ˈ96ˈ24(t) = (t-1)÷F+1;
+abstract type Vertex end # TODO [need to add Qbus etc. to the vertices]
 struct Vertexs <: Vertex
     bEV::Vector{Float64}
     bU::Matrix{Float64}
     pBus::Vector{Float64}
-    Vertexs(T, U) = new(
+    Vertexs(U) = new(
         Vector{Float64}(undef, T),
         Matrix{Float64}(undef, T, U),
         Vector{Float64}(undef, T)
     )
 end;
+new_vertex(j) = j in Rng1 ? Vertexp(length(D[j].U_1), length(D[j].U_2)) : Vertexs(length(D[j].U));
+fillvertex!(v::Vertex, j, X; inn = inn) = ((m, x) = (inn[j], X[j]); foreach(s -> value!(getproperty(v, s), m, getproperty(x, s)), propertynames(v)));
 struct Vertexp <: Vertex
     bES::Vector{Float64}
     bLent::Vector{Float64}
@@ -30,7 +37,7 @@ struct Vertexp <: Vertex
     bU_1::Matrix{Float64}
     bU_2::Matrix{Float64}
     pBus::Vector{Float64}
-    Vertexp(T, U1, U2) = new(
+    Vertexp(U1, U2) = new(
         Vector{Float64}(undef, T * F),
         Vector{Float64}(undef, T),
         Vector{Float64}(undef, T),
@@ -40,84 +47,62 @@ struct Vertexp <: Vertex
         Vector{Float64}(undef, T * F)
     )
 end;
-new_vertex(j; D = D, Rng1 = Rng1, T = T) = j in Rng1 ? Vertexp(T, length(D[j].U_1), length(D[j].U_2)) : Vertexs(T, length(D[j].U));
-new_VCG(; MaxVerNum = MaxVerNum, J = J) = [[new_vertex(j) for _ = 1:MaxVerNum] for j = 1:J];
-function fillvertex!(v::Vertex, j, X; inn = inn)
-    m, x = inn[j], X[j]
-    foreach(s -> value!(getproperty(v, s), m, getproperty(x, s)), propertynames(v))
-end;
-
-const GRB_ENV = Gurobi.Env();
-const mstsolvetime = Float64[];
-const pairblockrgap = Float64[]; # push! to it when a cut is added
-const selfblockrgap = Float64[]; # push! to it when a cut is added
-const DEFAULT_THREADS = Threads.nthreads(:default);  # Hardware Dependent
-const THREAD_FOR_MAIN_LOOP = 1;
-const THREAD_FOR_MASTER = 1;
-const THREAD_FOR_BLOCKS = DEFAULT_THREADS - THREAD_FOR_MAIN_LOOP - THREAD_FOR_MASTER;
-const J = (K)THREAD_FOR_BLOCKS;  # Number of Blocks
-
-ˈ96ˈ24(t; F = F) = (t-1)÷F+1;
 function get_C_and_O()
-        C = [
-            # Case 1: Flat midday, strong evening peak
-            [10, 9, 9, 9, 10, 12, 15, 18, 20, 18, 16, 15, 14, 15, 16, 18, 22, 28, 32, 30, 26, 20, 15, 12],
-            # Case 2: Two peaks (morning + evening), midday dip
-            [12, 11, 11, 12, 14, 18, 24, 26, 22, 18, 15, 14, 13, 14, 18, 24, 30, 34, 32, 28, 22, 18, 15, 13],
-            # Case 3: Midday solar effect (cheapest at noon, peaks morning & evening)
-            [16, 15, 14, 14, 15, 18, 24, 30, 28, 22, 18, 12, 10, 12, 16, 22, 28, 34, 36, 32, 28, 24, 20, 18],
-            # Case 4: Steady climb during day, single high plateau evening
-            [8, 8, 8, 9, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 34, 36, 36, 34, 30, 26, 20, 14],
-            # Case 5: Inverted (very low off-peak overnight, high midday, gentle evening)
-            [5, 5, 5, 6, 8, 12, 18, 24, 28, 32, 36, 38, 36, 34, 30, 28, 26, 24, 22, 20, 18, 14, 10, 8]
-        ]
-        O = [
-            # Case 1: Typical hot day (peak ~38°C around 15:00)
-            [28,28,27,27,28,29,31,33,35,36,37,38,38,38,37,36,35,34,32,31,30,29,29,28],
-            # Case 2: Extremely hot day (peak ~42°C, late afternoon peak)
-            [29,28,28,28,29,31,33,35,37,39,40,41,42,42,41,40,38,36,34,33,32,31,30,29],
-            # Case 3: Milder hot day (peak ~35°C, smooth curve)
-            [27,27,27,27,28,29,30,32,33,34,35,35,35,35,34,33,32,31,30,29,28,28,28,27],
-            # Case 4: Heatwave night (doesn’t cool much at night, peak 44°C)
-            [32,32,31,31,32,34,36,38,40,42,43,44,44,44,43,42,41,40,38,37,36,35,34,33],
-            # Case 5: Cool morning, sharp rise, peak ~39°C
-            [27,27,27,27,28,29,30,33,35,37,38,39,39,39,38,37,36,34,32,31,30,29,28,27]
-        ]
-        return C[rand(1:5)], O[rand(1:5)]
+    C = F === 1 ? [
+        [10, 9, 9, 9, 10, 12, 15, 18, 20, 18, 16, 15, 14, 15, 16, 18, 22, 28, 32, 30, 26, 20, 15, 12],# Case 1: Flat midday, strong evening peak
+        [12, 11, 11, 12, 14, 18, 24, 26, 22, 18, 15, 14, 13, 14, 18, 24, 30, 34, 32, 28, 22, 18, 15, 13],# Case 2: Two peaks (morning + evening), midday dip
+        [16, 15, 14, 14, 15, 18, 24, 30, 28, 22, 18, 12, 10, 12, 16, 22, 28, 34, 36, 32, 28, 24, 20, 18],# Case 3: Midday solar effect (cheapest at noon, peaks morning & evening)
+        [8, 8, 8, 9, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 34, 36, 36, 34, 30, 26, 20, 14],# Case 4: Steady climb during day, single high plateau evening
+        [5, 5, 5, 6, 8, 12, 18, 24, 28, 32, 36, 38, 36, 34, 30, 28, 26, 24, 22, 20, 18, 14, 10, 8]# Case 5: Inverted (very low off-peak overnight, high midday, gentle evening)
+    ] : [
+        [10, 10, 9, 9, 9, 10, 12, 14, 17, 19, 22, 25, 28, 30, 32, 33, 34, 34, 33, 31, 29, 26, 24, 22, 20, 19, 18, 18, 19, 20, 22, 25, 27, 29, 32, 34, 36, 37, 38, 38, 38, 37, 35, 33, 31, 28, 25, 23, 21, 19, 18, 17, 16, 15, 14, 13, 12, 12, 12, 12, 12, 13, 14, 16, 18, 20, 22, 24, 25, 26, 26, 25, 24, 22, 20, 18, 16, 15, 14, 13, 12, 11, 11, 10, 10, 10, 10, 9, 9, 9, 9, 9, 9, 9, 9, 10], # Morning–Evening Peaks
+        [28, 29, 28, 27, 26, 25, 24, 22, 21, 19, 18, 17, 15, 14, 13, 13, 13, 13, 14, 15, 16, 18, 19, 21, 23, 25, 27, 28, 29, 29, 30, 31, 32, 33, 34, 34, 34, 34, 33, 32, 31, 30, 29, 28, 27, 26, 26, 26, 27, 28, 29, 30, 31, 31, 31, 31, 30, 29, 28, 27, 26, 25, 24, 24, 23, 22, 22, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 31, 32, 33, 33, 33, 33, 33, 32, 31, 30, 29, 29, 29, 29, 29, 29, 29, 29, 29], # Midday Solar Dip
+        [28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16, 16, 15, 15, 15, 16, 17, 18, 19, 20, 22, 23, 24, 25, 25, 25, 25, 25, 24, 24, 24, 25, 26, 27, 28, 29, 30, 31, 31, 30, 29, 28, 27, 26, 25, 25, 25, 25, 26, 27, 28, 29, 29, 29, 28, 27, 26, 25, 24, 24, 24, 24, 25, 26, 27, 28, 28, 28, 27, 26, 25, 25, 25, 25, 25, 26, 27, 28, 29, 29, 29, 29, 28, 27, 26, 25, 25, 25, 25, 26, 27, 28, 29, 29], # Night Peak
+        [14, 15, 13, 22, 30, 16, 17, 18, 14, 24, 26, 38, 12, 13, 27, 30, 13, 17, 28, 35, 20, 14, 18, 26, 16, 19, 15, 13, 30, 34, 12, 28, 14, 17, 35, 22, 12, 13, 25, 16, 19, 15, 18, 27, 32, 15, 13, 19, 21, 23, 24, 27, 31, 18, 12, 13, 15, 21, 33, 16, 19, 15, 12, 28, 34, 15, 18, 25, 12, 27, 26, 22, 14, 12, 13, 19, 29, 34, 38, 20, 12, 18, 13, 17, 26, 31, 14, 15, 19, 12, 13, 24, 34, 20, 15, 14], # Volatile / Spiky Day
+        [8, 8, 8, 9, 9, 9, 10, 10, 10, 11, 11, 12, 12, 13, 13, 14, 15, 15, 16, 17, 18, 18, 19, 20, 21, 21, 22, 23, 23, 24, 25, 25, 26, 27, 27, 28, 29, 30, 30, 31, 31, 32, 33, 33, 34, 34, 35, 35, 36, 36, 36, 37, 37, 37, 37, 37, 38, 38, 38, 38, 38, 37, 37, 37, 37, 36, 36, 36, 35, 35, 34, 34, 33, 33, 32, 32, 31, 30, 30, 29, 28, 27, 27, 26, 26, 25, 25, 24, 24, 24, 24, 24, 23, 23, 22, 22] # Gradual Rising
+    ]
+    O = [
+        [28,28,27,27,28,29,31,33,35,36,37,38,38,38,37,36,35,34,32,31,30,29,29,28],# Case 1: Typical hot day (peak ~38°C around 15:00)
+        [29,28,28,28,29,31,33,35,37,39,40,41,42,42,41,40,38,36,34,33,32,31,30,29],# Case 2: Extremely hot day (peak ~42°C, late afternoon peak)
+        [27,27,27,27,28,29,30,32,33,34,35,35,35,35,34,33,32,31,30,29,28,28,28,27],# Case 3: Milder hot day (peak ~35°C, smooth curve)
+        [32,32,31,31,32,34,36,38,40,42,43,44,44,44,43,42,41,40,38,37,36,35,34,33],# Case 4: Heatwave night (doesn’t cool much at night, peak 44°C)
+        [27,27,27,27,28,29,30,33,35,37,38,39,39,39,38,37,36,34,32,31,30,29,28,27]# Case 5: Cool morning, sharp rise, peak ~39°C
+    ]
+    C[rand(1:5)], O[rand(1:5)]
 end;
-function get_pair_and_self_Rng(J; rho = rho); (d = round(Int, rho * J); (1:d, d+1:J)) end; # Rng1, Rng2
-function prev(t, d, T) return (n = t-d; n<1 ? T+n : n) end;
-function pc_P_AC(O, OH, CND, Q_I, COP) return ceil(Int, ((maximum(O) - OH)CND + maximum(Q_I)) / COP) end;
+get_pair_and_self_Rng(J) = (d = round(Int, rho * J); (1:d, d+1:J)); # Rng1, Rng2
+prev(t, d, T) = (n = t-d; n<1 ? T+n : n);
+pc_P_AC(O, OH, CND, Q_I, COP) = ceil(Int, ((maximum(O) - OH)CND + maximum(Q_I)) / COP);
 function gen_ac_data()::Tuple
-        CND   = .5rand(1:7) 
-        INR   = rand(6:20)  
-        COP   = rand(2:.5:4)
-        Q_I   = rand(3:9, T)
-        Q_BUS = rand(25:35) 
-        OH    = rand(24:29) 
-        OΔ    = rand(4:9)   
-        P_AC  = pc_P_AC(O, OH, CND, Q_I, COP)
-        return CND, INR, COP, Q_I, Q_BUS, OH, OΔ, P_AC
+    CND   = .5rand(1:7) 
+    INR   = rand(6:20)  
+    COP   = rand(2:.5:4)
+    Q_I   = rand(3:9, T)
+    Q_BUS = rand(25:35) 
+    OH    = rand(24:29) 
+    OΔ    = rand(4:9)   
+    P_AC  = pc_P_AC(O, OH, CND, Q_I, COP)
+    CND, INR, COP, Q_I, Q_BUS, OH, OΔ, P_AC
 end;
 function add_AC_module!(model, O, CND, INR, COP, Q_I, Q_BUS, OH, OΔ, P_AC)
-        pAC = JuMP.@variable(model, [1:T], lower_bound = 0, upper_bound = P_AC)
-        o = JuMP.@variable(model, [1:T], lower_bound = OH-OΔ, upper_bound = OH)
-        q = JuMP.@variable(model, [1:T], lower_bound = 0, upper_bound = Q_BUS)
-        JuMP.@constraint(model, [t=1:T], (O[t]-o[t])CND + Q_I[t] -q[t] -pAC[t]COP == (o[t<T ? t+1 : 1]-o[t])INR)
-        return o, q, pAC
+    pAC = JuMP.@variable(model, [1:T], lower_bound = 0, upper_bound = P_AC)
+    o = JuMP.@variable(model, [1:T], lower_bound = OH-OΔ, upper_bound = OH)
+    q = JuMP.@variable(model, [1:T], lower_bound = 0, upper_bound = Q_BUS)
+    JuMP.@constraint(model, [t=1:T], (O[t]-o[t])CND + Q_I[t] -q[t] -pAC[t]COP == (o[t<T ? t+1 : 1]-o[t])INR)
+    o, q, pAC
 end;
 function add_U_module!(model, U)
-        bU::Matrix{JuMP.VariableRef} = JuMP.@variable(model, [t = 1:T, i = eachindex(U)], Bin)
-        JuMP.@constraint(model, sum(bU; dims = 1) .≥ true)
-        pU = JuMP.@expression(model, [t=1:T], sum(sum(bU[prev(t,φ-1,T), i]P for (φ,P) = enumerate(v)) for (i,v) = enumerate(U))) # Vector{JuMP.AffExpr}
-        return bU, pU
+    bU::Matrix{JuMP.VariableRef} = JuMP.@variable(model, [t = 1:T, i = eachindex(U)], Bin)
+    JuMP.@constraint(model, sum(bU; dims = 1) .≥ true)
+    pU = JuMP.@expression(model, [t=1:T], sum(sum(bU[prev(t,φ-1,T), i]P for (φ,P) = enumerate(v)) for (i,v) = enumerate(U))) # Vector{JuMP.AffExpr}
+    return bU, pU
 end;
 function add_self_EV_module!(model, P_EV, E_EV) # self means a household in a block with cardinality 1
-        bEV, pEV = JuMP.@variable(model, [1:T], Bin), JuMP.@variable(model, [1:T])
-        JuMP.@constraint(model, (P_EV.m)bEV .≤ pEV)
-        JuMP.@constraint(model, pEV .≤ (P_EV.M)bEV)
-        JuMP.@constraint(model, sum(pEV) ≥ E_EV)
-        return bEV, pEV # bEV can be _inferred from_ pEV
+    bEV, pEV = JuMP.@variable(model, [1:T], Bin), JuMP.@variable(model, [1:T])
+    JuMP.@constraint(model, (P_EV.m)bEV .≤ pEV)
+    JuMP.@constraint(model, pEV .≤ (P_EV.M)bEV)
+    JuMP.@constraint(model, sum(pEV) ≥ E_EV)
+    bEV, pEV # bEV can be _inferred from_ pEV
 end;
 function pc_self_P_BUS(D, U, P_EV, E_EV, O, CND, INR, COP, Q_I, OH, OΔ, P_AC)::Tuple{Bool, Int64}
     success, P_BUS = true, -1
@@ -158,9 +143,9 @@ function add_EV_2_module!(model, P_EV_2, E_EV_2, bLent, pLent)
         return bEV_2, pEV_2
 end;
 function add_self_circuit_breaker_module!(model, P_BUS, D, pU, pEV, pAC)
-        pBus = JuMP.@variable(model, [1:T], lower_bound = 0, upper_bound = P_BUS)
-        JuMP.@constraint(model, pBus .≥ D + pU + pEV + pAC) # No G | ES
-        return pBus
+    pBus = JuMP.@variable(model, [1:T], lower_bound = 0, upper_bound = P_BUS)
+    JuMP.@constraint(model, pBus .≥ D + pU + pEV + pAC) # No G | ES
+    pBus
 end;
 function add_circuit_breaker_pair_module!(model, P_BUS_1, P_BUS_2, p_ES, G, pLent, pEV_1, pU_1, pAC_1, D_1, pEV_2, pU_2, pAC_2, D_2; T = T, F = F)
     pBus_1 = JuMP.@variable(model, [1:(F)T], lower_bound = -P_BUS_1, upper_bound = P_BUS_1)
@@ -170,7 +155,7 @@ function add_circuit_breaker_pair_module!(model, P_BUS_1, P_BUS_2, p_ES, G, pLen
     JuMP.@constraint(model, pBus_2 .≥ pEV_2 + pU_2 + pAC_2 + D_2)
     pBus = JuMP.@variable(model, [1:(F)T])
     JuMP.@constraint(model, [t = 1:(F)T], pBus[t] == pBus_1[t] + pBus_2[f(t)])
-    return pBus, pBus_1, pBus_2
+    pBus, pBus_1, pBus_2
 end;
 function add_ES_module!(model, P_ES, E_ES; T = T, F = F)
     pES = ( # eES is dependent variable
@@ -181,7 +166,7 @@ function add_ES_module!(model, P_ES, E_ES; T = T, F = F)
         JuMP.@constraint(model, pES.d .≤ (1 .- bES)P_ES.d)
     eES = JuMP.@variable(model, [t=1:(F)T], lower_bound = t<(F)T ? 0 : E_ES.e, upper_bound = E_ES.M)
     JuMP.@constraint(model, [t=1:(F)T], pES.c[t]*.95/F - pES.d[t]/.95/F == eES[t]-(t>1 ? eES[t-1] : E_ES.i))
-    return pES, bES, eES
+    pES, bES, eES
 end;
 function get_E_ES(Rng)::NamedTuple # # unaltered when scale is changed
     M = rand(Rng) # Max E
@@ -314,11 +299,6 @@ function fill_inn!(X, D; inn = inn, O = O, Rng1 = Rng1)
     foreach(wait, tasks)
     println()
 end;
-function scalar!(X, j, m, x)
-    o = m.moi_backend
-    Gurobi.GRBgetdblattrelement(o, "X", Gurobi.c_column(o, JuMP.index(x[j])), view(X, j))
-end;
-value!(X, m, x) = foreach(j -> scalar!(X, j, m, x), eachindex(X));
 function solve_mst_and_up_value!(m, s, θ, β)
     JuMP.optimize!(m)
     ts = JuMP.termination_status(m)
@@ -328,18 +308,12 @@ function solve_mst_and_up_value!(m, s, θ, β)
     value!(s.β, m, β)
     value!(s.θ, m, θ)
 end;
-function shot!(ref; model = model, θ = θ, β = β, rEF = rEF)
+function shot!(ref)
     s = rEF.x
     @lock mst_lock solve_mst_and_up_value!(model, s, θ, β) # `s` gets updated/mutated here
     s_tmp = ref.x
     setfield!(ref, :x, s) # the ref gets updated here
     setfield!(rEF, :x, s_tmp)
-end;
-function get_simple_model(; GRB_ENV = GRB_ENV)
-    m = JuMP.direct_model(Gurobi.Optimizer(GRB_ENV))
-    JuMP.set_silent(m)
-    JuMP.set_attribute(m, "Threads", 1)
-    m
 end;
 function initialize_out()
     model = get_simple_model()
@@ -349,9 +323,9 @@ function initialize_out()
     JuMP.@expression(model, out_obj_tbMax, sum(θ))
     JuMP.@objective(model, Max, out_obj_tbMax)
     # JuMP.@constraint(model, out_obj_tbMax ≤ an_UB)
-    return model, θ, β
+    model, θ, β
 end;
-function bilin_expr(j, iˈı::Function, β; model = model, X = X)
+function bilin_expr(j, iˈı::Function, β)
     if j in Rng1
         JuMP.@expression(model, sum(iˈı(p)b for (b, p) = zip(β, X[j].pBus)))
     else
@@ -360,7 +334,7 @@ function bilin_expr(j, iˈı::Function, β; model = model, X = X)
     end
 end;
 sublog(j) = println("block(j = $j)> no solution, go back to re-optimize...")
-function subproblemˈs_duty(j; selfblockrgap = selfblockrgap, selfblockrgap_lock = selfblockrgap_lock, pairblockrgap = pairblockrgap, pairblockrgap_lock = pairblockrgap_lock, Rng1 = Rng1, MaxVerNum = MaxVerNum, K_VCG = K_VCG, VCG = VCG, Ncuts = Ncuts, initialize = false, update_snap = false, ref = ref, inn = inn, X = X, model = model, θ = θ, β = β, COT = COT)
+function subproblemˈs_duty(j; initialize = false)
     mj = inn[j]
     while true
         s = getfield(ref, :x)
@@ -374,9 +348,7 @@ function subproblemˈs_duty(j; selfblockrgap = selfblockrgap, selfblockrgap_lock
             continue
         end
         if !initialize
-            if update_snap
-                s = getfield(ref, :x)
-            end
+            s = getfield(ref, :x)
             s.θ[j] - bilin_expr(j, ı, s.β) > COT || return
         end
         K_VCG[j] === MaxVerNum && return
@@ -393,7 +365,7 @@ function subproblemˈs_duty(j; selfblockrgap = selfblockrgap, selfblockrgap_lock
         return
     end
 end;
-function subproblemˈs_objbnd!(pvv, j; ref = ref, inn = inn)
+function subproblemˈs_objbnd!(pvv, j)
     mj = inn[j]
     s = getfield(ref, :x)
     JuMP.set_objective_function(mj, bilin_expr(j, identity, s.β))
@@ -410,12 +382,11 @@ function subproblemˈs_objbnd!(pvv, j; ref = ref, inn = inn)
     end
 end;
 function warm()
-    t = time()
     tasks = map(j -> Threads.@spawn(subproblemˈs_duty(j; initialize = true)), 1:J)
     foreach(wait, tasks)
     Ncuts.value === J || error(); # each block contributes 1 cut to make the master have a finite initial dual bound
-    shot!(ref);
-    time() - t
+    shot!(ref)
+    nothing
 end;
 next(j, J) = j === J ? 1 : j+1;
 ntasksaway(tasks) = count(!istaskdone, tasks); # num of tasks away (i.e. not controllable)
@@ -426,7 +397,7 @@ function mainlog(tasks, ref, Ncuts, tabs0)
     t = round(Int, time() - tabs0) 
     println("main> N_BlockTasks_Away = $a, ub = $ub, Ncuts = $n, $t sec")
 end;
-function main(train_time, mst_task_ref, tasks; proceed_main = proceed_main, J = J, ref = ref, model = model, LOG_TIME = LOG_TIME, Ncuts = Ncuts)
+function main(train_time, mst_task_ref, tasks)
     tabs0 = time(); tabs1 = tabs0 + train_time # Time control region, do NOT move this line
     #################################################
     Ncuts0 = Ncuts.value
@@ -449,7 +420,7 @@ function main(train_time, mst_task_ref, tasks; proceed_main = proceed_main, J = 
         end
         while ntasksaway(tasks) < THREAD_FOR_BLOCKS  # for block subproblems
             if istaskdone(tasks[j])
-                tasks[j] = Threads.@spawn(subproblemˈs_duty($j; update_snap = true))
+                tasks[j] = Threads.@spawn(subproblemˈs_duty($j))
             end
             j = next(j, J) # go to ask the next block
         end
@@ -457,7 +428,7 @@ function main(train_time, mst_task_ref, tasks; proceed_main = proceed_main, J = 
     end
     foreach(j -> Gurobi.GRBterminate(JuMP.backend(inn[j])), 1:J)
 end;
-function main(train_time; J = J, ref = ref)
+function main(train_time)
     mst_task_ref = Ref(Threads.@spawn(shot!(ref)))
     tasks = map(_ -> Threads.@spawn(missing), 1:J)
     main_task = Threads.@spawn(main(train_time, mst_task_ref, tasks))
@@ -470,11 +441,7 @@ macro get_int_decision(model, expr) return esc(quote
         a
     end
 end) end;
-function get_prob_decision(model, I)
-    x = JuMP.@variable(model, [1:I], lower_bound = 0)
-    JuMP.@constraint(model, sum(x) == 1)
-    x
-end;
+get_prob_decision(model, I) = (x = JuMP.@variable(model, [1:I], lower_bound = 0); JuMP.@constraint(model, sum(x) == 1); x);
 function primal_recovery(model) 
     JuMP.set_attribute(model, "Threads", 4)
     l = [get_prob_decision(model, K_VCG[j]) for j = 1:J]
@@ -514,46 +481,29 @@ function primal_recovery(model)
     prec_time, ub
 end;
 
-const (Rng1, Rng2) = get_pair_and_self_Rng(J);
-const (C, O) = get_C_and_O(); # TODO [C also has a F = 4 version] price and Celsius vector
-const MaxVerNum = 150; # increase this if not sufficient
-const COT = 0.5/J;
-const an_UB = 30.0J
-const mst_lock = ReentrantLock();
-const selfblockrgap_lock = ReentrantLock();
-const pairblockrgap_lock = ReentrantLock();
-const inn = [get_simple_model() for j = 1:J];
-const model, θ, β = initialize_out(); # ⚠️⚠️⚠️
-const rEF = Ref((θ = fill(an_UB/J, J), β = fill(1/F/T, (F)T), ub = Ref(an_UB)));
-const ref = Ref((θ = fill(an_UB/J, J), β = fill(1/F/T, (F)T), ub = Ref(an_UB))); # exposed solution
-const Ncuts = Threads.Atomic{Int}(0);
-const proceed_main = Ref(true);
+const (Rng1, Rng2), (C, O) = get_pair_and_self_Rng(J), get_C_and_O();
+const MaxVerNum, proceed_main = 150, Ref(true); # increase this if not sufficient
+const COT, an_UB = 0.5/J, 30.0J;
+const mst_lock, selfblockrgap_lock, pairblockrgap_lock = ReentrantLock(), ReentrantLock(), ReentrantLock();
+const (model, θ, β), inn, Ncuts = initialize_out(), [get_simple_model() for j = 1:J], Threads.Atomic{Int}(0);
+const ref, rEF = Ref((θ = fill(an_UB/J, J), β = fill(1/F/T, (F)T), ub = Ref(an_UB))), Ref((θ = fill(an_UB/J, J), β = fill(1/F/T, (F)T), ub = Ref(an_UB)));
 ##########################################################
 # [build inn]
 ##########################################################
-const D = Vector{NamedTuple}(undef, J);
-const X = Vector{NamedTuple}(undef, J); # inn's
+const X, D = Vector{NamedTuple}(undef, J), Vector{NamedTuple}(undef, J); # X is inn's
 fill_inn!(X, D); # build the J blocks in parallel, and get the raw Data
 foreach(mj -> JuMP.set_objective_sense(mj, JuMP.MIN_SENSE), inn)
-const VCG = new_VCG(); # collect the Vertices found in the CG algorithm
-const K_VCG = fill(0, J); # initially the first vertex is invalid, so K_VCG[j] = 0;
-##########################################################
-# [warm up]: to make the master problem have a _finite_ initial dual bound
-# This procedure has both primal and dual physical meaning
-# From the primal side, we need to construct an initial feasible solution so that
-# The primal side of `prm` is (integer) feasible ab initio
-# From the dual side, we can construct an "even"/"fair" initial dual vector
-##########################################################
+const VCG, K_VCG = [[new_vertex(j) for _ = 1:MaxVerNum] for j = 1:J], fill(0, J); # initially the first vertex is invalid, so K_VCG[j] = 0
 foreach(mj -> JuMP.set_attribute(mj, "TimeLimit", 45), inn)
-warm() # return it's time
-for (train_time, cg_time) = ((300,300), (600,900), (1800,2700))
-    ##########################################################
-    # [main]
-    ##########################################################
-    foreach(mj -> JuMP.set_attribute(mj, "TimeLimit", 45), inn)
-    setfield!(proceed_main, :x, true)
-    mainnt = main(train_time);
-    wait(mainnt.main); wait(mainnt.master.x); foreach(wait, mainnt.blocks)
+warm()
+
+for (train_time, cg_time) = ((0, 0), (300,300), (600,900), (1800,2700))
+    if train_time > 0
+        foreach(mj -> JuMP.set_attribute(mj, "TimeLimit", 45), inn)
+        setfield!(proceed_main, :x, true)
+        mainnt = main(train_time);
+        wait(mainnt.main); wait(mainnt.master.x); foreach(wait, mainnt.blocks)
+    end
     ##########################################################
     # [Statistics]
     ##########################################################
@@ -589,5 +539,6 @@ for (train_time, cg_time) = ((300,300), (600,900), (1800,2700))
     H = 2length(Rng1) + length(Rng2);
     S = my_seed;
     rnt = (; K, S, F, rho, J, H, cg_time, cg_rgap, decen_ub, decen_rgap, decen_time, Kverm, Kvermu, KverM, msttimem, msttimemu, msttimeM, selfrgapm, selfrgapmu, selfrgapM, pairrgapm, pairrgapmu, pairrgapM)
-    JLD2.@save  "CGT$(cg_time)_K$(K)_F$(F)_KR$(Krho)_S$(S).jld2" rnt
+    JLD2.@save "CGT$(cg_time)_K$(K)_F$(F)_KR$(Krho)_S$(S).jld2" rnt
+    decen_rgap <= 0.0001 && break
 end
