@@ -36,3 +36,56 @@ end
 axislegend(ax; position = :rt)
 axislegend(ax2; position = :rt)
 save("timergap2.pdf", f)
+
+using CairoMakie
+
+g(F, t) = [vnt[i].cg_rgap for i = 1:71 if vnt[i].F == F && vnt[i].cg_time == t];
+t(F, t) = [vnt[i].decen_time for i = 1:71 if vnt[i].F == F && vnt[i].cg_time == t];
+d(F, t) = [vnt[i].decen_rgap for i = 1:71 if vnt[i].F == F && vnt[i].cg_time == t];
+o(v) = fill(1, length(v));
+f = Figure();
+
+ax = Axis(f[1,1]; ylabel="Relative Gap", xticksvisible=false,xticklabelsvisible=false)
+boxplot!(ax, o(g(1,0)), g(1,0); color = :cadetblue1)
+ax = Axis(f[1,2]; xticksvisible=false,xticklabelsvisible=false)
+boxplot!(ax, o(g(1,300)), g(1,300); color = :cadetblue1)
+ax = Axis(f[1,3]; xticksvisible=false,xticklabelsvisible=false)
+boxplot!(ax, o(d(1,300)), d(1,300); color = :palegreen)
+ax = Axis(f[1,4]; xticksvisible=false,xticklabelsvisible=false,title="K=64, F=1, ρ=75%")
+boxplot!(ax, o(g(1,900)), g(1,900); color = :cadetblue1)
+ax = Axis(f[1,5]; xticksvisible=false,xticklabelsvisible=false)
+boxplot!(ax, o(d(1,900)), d(1,900); color = :palegreen)
+
+ax = Axis(f[2,1]; ylabel="Time (s)", xticksvisible=false,xticklabelsvisible=false,ytickcolor=:white,yticklabelcolor=:white,xgridvisible=false,ygridvisible=false,spinewidth=0)
+ax = Axis(f[2,3];xticksvisible=false,xticklabelsvisible=false)
+boxplot!(ax, o(t(1,300)), t(1,300); color = :palegreen)
+ax = Axis(f[2,5];xticksvisible=false,xticklabelsvisible=false)
+boxplot!(ax, o(t(1,900)), t(1,900); color = :palegreen)
+
+ax = Axis(f[3,1]; ylabel="Relative Gap", xticksvisible=false,xticklabelsvisible=false)
+boxplot!(ax, o(g(4,0)), g(4,0); color = :cadetblue1)
+ax = Axis(f[3,2]; xticksvisible=false,xticklabelsvisible=false)
+boxplot!(ax, o(g(4,300)), g(4,300); color = :cadetblue1)
+ax = Axis(f[3,4]; xticksvisible=false,xticklabelsvisible=false,title="K=64, F=4, ρ=25%")
+boxplot!(ax, o(g(4,900)), g(4,900); color = :cadetblue1)
+ax = Axis(f[3,6]; xticksvisible=false,xticklabelsvisible=false)
+boxplot!(ax, o(g(4,2700)), g(4,2700); color = :cadetblue1)
+ax = Axis(f[3,3]; xticksvisible=false,xticklabelsvisible=false)
+boxplot!(ax, o(d(4,300)), d(4,300); color = :palegreen)
+ax = Axis(f[3,5]; xticksvisible=false,xticklabelsvisible=false)
+boxplot!(ax, o(d(4,900)), d(4,900); color = :palegreen)
+ax = Axis(f[3,7]; xticksvisible=false,xticklabelsvisible=false)
+boxplot!(ax, o(d(4,2700)), d(4,2700); color = :palegreen)
+
+ax = Axis(f[4,1]; xlabel="0s",ylabel="Time (s)",xticksvisible=false,xticklabelsvisible=false,ytickcolor=:white,yticklabelcolor=:white,xgridvisible=false,ygridvisible=false,spinewidth=0)
+ax = Axis(f[4,2]; xlabel="300s",xticksvisible=false,xticklabelsvisible=false,yticksvisible=false,yticklabelsvisible=false,xgridvisible=false,ygridvisible=false,spinewidth=0)
+ax = Axis(f[4,3]; xlabel="300s",xticksvisible=false,xticklabelsvisible=false)
+boxplot!(ax, o(t(4,300)), t(4,300); color = :palegreen)
+ax = Axis(f[4,4]; xlabel="900s",xticksvisible=false,xticklabelsvisible=false,yticksvisible=false,yticklabelsvisible=false,xgridvisible=false,ygridvisible=false,spinewidth=0)
+ax = Axis(f[4,5]; xlabel="900s",xticksvisible=false,xticklabelsvisible=false)
+boxplot!(ax, o(t(4,900)), t(4,900); color = :palegreen)
+ax = Axis(f[4,6]; xlabel="2700s",xticksvisible=false,xticklabelsvisible=false,yticksvisible=false,yticklabelsvisible=false,xgridvisible=false,ygridvisible=false,spinewidth=0)
+ax = Axis(f[4,7]; xlabel="2700s",xticksvisible=false,xticklabelsvisible=false)
+boxplot!(ax, o(t(4,2700)), t(4,2700); color = :palegreen)
+save("b.pdf", f)
+
