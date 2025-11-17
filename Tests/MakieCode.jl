@@ -118,3 +118,36 @@ ax = Axis(f[4,3]; xlabel = "300s", xticksvisible=false,xticklabelsvisible=false,
 ax = Axis(f[4,4]; xlabel = "300s", xticksvisible=false,xticklabelsvisible=false)
 boxplot!(ax, o(t(4,300)), t(4,300); color = :palegreen)
 
+using CairoMakie
+
+m(F,t) = [vnt[i].Kvermu for i = 1:71 if vnt[i].F == F && vnt[i].cg_time == t];
+M(F,t) = [vnt[i].KverM for i = 1:71 if vnt[i].F == F && vnt[i].cg_time == t];
+
+f = Figure(; figure_padding=0); # Kver.pdf
+ax = Axis(f[1,1]; ylabel="Statistic of Cut Number", title = "mean", xticksvisible=false,xticklabelsvisible=false)
+boxplot!(ax, fill(1,10), m(1,300); color = :gold)
+ax = Axis(f[1,2]; xticksvisible=false,xticklabelsvisible=false, title = "max")
+boxplot!(ax, fill(1,10), M(1,300); color = :lightcoral)
+ax = Axis(f[1,3]; xticksvisible=false,xticklabelsvisible=false, title = "mean")
+boxplot!(ax, fill(1,10), m(1,900); color = :gold)
+ax = Axis(f[1,4]; xticksvisible=false,xticklabelsvisible=false, title = "max")
+boxplot!(ax, fill(1,10), M(1,900); color = :lightcoral)
+ax = Axis(f[1,5]; title = "mean",xticksvisible=false,xticklabelsvisible=false,ytickcolor=:white,yticklabelcolor=:white,xgridvisible=false,ygridvisible=false,spinewidth=0)
+ax = Axis(f[1,6]; title = "max",xticksvisible=false,xticklabelsvisible=false,ytickcolor=:white,yticklabelcolor=:white,xgridvisible=false,ygridvisible=false,spinewidth=0)
+ax2 = Axis(f[1,6]; yaxisposition = :right, ylabel = "K=64, F=1, ρ=75%",xticksvisible=false,xticklabelsvisible=false,ytickcolor=:white,yticklabelcolor=:white,xgridvisible=false,ygridvisible=false,spinewidth=0)
+
+ax = Axis(f[2,1]; xlabel = "300s", ylabel="Statistic of Cut Number", xticksvisible=false,xticklabelsvisible=false)
+boxplot!(ax, fill(1,10), m(4,300); color = :gold)
+ax = Axis(f[2,2]; xticksvisible=false,xticklabelsvisible=false, xlabel = "300s")
+boxplot!(ax, fill(1,10), M(4,300); color = :lightcoral)
+ax = Axis(f[2,3]; xticksvisible=false,xticklabelsvisible=false, xlabel = "900s")
+boxplot!(ax, fill(1,10), m(4,900); color = :gold)
+ax = Axis(f[2,4]; xticksvisible=false,xticklabelsvisible=false, xlabel = "900s")
+boxplot!(ax, fill(1,10), M(4,900); color = :lightcoral)
+ax = Axis(f[2,5]; xticksvisible=false,xticklabelsvisible=false, xlabel = "2700s")
+boxplot!(ax, fill(1,10), m(4,2700); color = :gold)
+ax = Axis(f[2,6]; xticksvisible=false,xticklabelsvisible=false, xlabel = "2700s")
+boxplot!(ax, fill(1,10), M(4,2700); color = :lightcoral)
+ax2 = Axis(f[2,6]; yaxisposition = :right, ylabel = "K=64, F=4, ρ=25%",xticksvisible=false,xticklabelsvisible=false,ytickcolor=:white,yticklabelcolor=:white,xgridvisible=false,ygridvisible=false,spinewidth=0)
+
+save("b.pdf", f)
