@@ -1,6 +1,8 @@
 module L2i
+import ..Settings
 import ..In: J1, J2, T, F, _s
-import JuMP
+import JuMP, Dates, JLD2
+here_now() = Dates.now() + Dates.Hour(8)
 
 #= There are 2 ways to enforce integrality---add to expression or add to coefficients (i.e. raw decisions)
 we opt to follow the definition and add integrality to the resulting expression
@@ -9,24 +11,30 @@ for non-integer decisions, proper combination exist at the optimal solution =#
 enforce_integrality(m, e) = (a = JuMP.@variable(m, integer=true); JuMP.@constraint(m, a == e))
 _8(v, x) = JuMP.set_lower_bound(v[1], x)
 add_int_constr(m) = for p=(:bU, :bEV, :bLent, :bES), at_j=m[p], e=values(at_j) enforce_integrality(m, e) end
-function LP2IP(#=ipr=# m, ismC, r)
+function LP2IP(#=ipr=# m, MaxSec, ismC, r)
+    JuMP.set_attribute(m, "Threads", 4)
     JuMP.optimize!(m)
     JuMP.termination_status(m) === JuMP.OPTIMAL || error(1)
-    r[:pl] = bound = JuMP.objective_value(m) # primal linear, should = `out`
-    # println("primal_recover_LP = $bound")
+    tm = JuMP.solve_time(m)
+    @ccall(printf("LP2IP> LP solved in %e(s)\n"::Cstring; tm::Cdouble)::Cint)
+    r[:pl] = JuMP.objective_value(m) # primal linear, should = `out`
     add_int_constr(m)
     if ismC
         foreach(c -> _8(c, 1.), m[:c])
-        JuMP.set_attribute(m, "TimeLimit", 8)
+        JuMP.set_attribute(m, "TimeLimit", 15)
         JuMP.optimize!(m)
         foreach(c -> _8(c, 0.), m[:c])
     end
-    JuMP.set_attribute(m, "TimeLimit", 45)
-    # JuMP.set_attribute(m, "OutputFlag", 1)
+    Settings.reset_param_gap(m)
+    JuMP.set_attribute(m, "TimeLimit", MaxSec/3)
     JuMP.optimize!(m)
-    JuMP.primal_status(m) === JuMP.FEASIBLE_POINT || error(2)
+    JuMP.primal_status(m) === JuMP.FEASIBLE_POINT || error(JuMP.termination_status(m), JuMP.primal_status(m))
     r[:pi] = bound = JuMP.objective_value(m) # primal integer
-    # println("primal_recover_IP = $bound")
+    JLD2.save(
+        string(ifelse(ismC, "MinC", "Feas"), ".jld2"), # file name
+        "r", # key string (irrelevant)
+        (t = here_now(), r = r) # time and result
+    )
     bound
 end
 

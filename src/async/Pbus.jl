@@ -1,6 +1,7 @@
 module Pbus # at Household level, not at block level!!!
 
 import ..In: _s, _t, D, G, F, T, J1, C
+import ..Settings
 import JuMP
 
 function decide1(tks, inn)
@@ -28,9 +29,7 @@ function decide2(m, #=House0=# h, G, D)
     #==# refs = JuMP.@constraint(m, [f=_1FT, i=1:2], e ≥ (3-2i)pBus[h,f])
     JuMP.@objective(m, Min, e)
     JuMP.set_attribute(m, "TimeLimit", 18)
-    JuMP.optimize!(m)
-    pri = JuMP.primal_status(m)
-    pri === JuMP.FEASIBLE_POINT || error("with G pBusH0 optimize: $pri")
+    Settings.solve_many_times(m, "decide2")
     E = JuMP.objective_value(m)
     #==# JuMP.delete(m, e)
     #==# foreach(c -> JuMP.delete(m, c), refs)

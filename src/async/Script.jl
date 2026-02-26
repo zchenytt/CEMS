@@ -1,7 +1,17 @@
 import Random, JuMP
-Random.seed!(hash(25))
+Random.seed!(hash(7235))
 using EM, EM.In
 Settings.printinfo()
+
+function summary(#=result_nt=# r)
+    agap = r[:du] - r[:dl]
+    rgap = agap / r[:dl]
+    err = abs(r[:du] - r[:pl]) / max(abs(r[:du]), abs(r[:pl]))
+    rgap_ip = (r[:pi] - r[:dl]) / r[:pi]
+    println("summary> l = $rgap, e = $err, i = $rgap_ip, lagap = $agap")
+end;
+
+# This new program contains new elements such as RES curtailing cost, so a careful comparison to the old code might be not meaningful
 
 begin # containers
     const COT = 1e-5
@@ -13,7 +23,7 @@ begin # containers
     const rST = Dict(k => NaN for k = (:dl, :du, :pl, :pi))
     const Lk = (ref=ReentrantLock(), d=ReentrantLock(), p=ReentrantLock())
     const Ncuts = Threads.Atomic{Int}(0)
-    MaxSec = 900
+    MaxSec = 2700
 end;
 
 begin # build test case
@@ -43,8 +53,8 @@ begin # Feas. summary
     Train.modify_lb(tks, inn, lba, Lk.ref, ref, false);
     rST[:dl] = lba.value;
     EM.L2i.complete_LP(mst.f.p)
-    P_A = EM.L2i.LP2IP(mst.f.p, false, rST) + 5.678
-    Train.summary(rST)
+    P_A = EM.L2i.LP2IP(mst.f.p, MaxSec, false, rST) + 5.678
+    summary(rST)
 end;
 
 begin # Min.Cost problem
@@ -66,6 +76,6 @@ begin # Min.Cost summary
     Train.modify_lb(tks, inn, lba, Lk.ref, ref, true);
     rST[:dl] = lba.value;
     EM.L2i.complete_LP(mst.c.p, P_A)
-    EM.L2i.LP2IP(mst.c.p, true, rST)
-    Train.summary(rST)
+    EM.L2i.LP2IP(mst.c.p, MaxSec, true, rST)
+    summary(rST)
 end;

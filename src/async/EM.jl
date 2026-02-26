@@ -1,8 +1,8 @@
 module EM
     export Settings, Ms, Ipr, Train
     include("In.jl")
-    include("L2i.jl")
     include("Settings.jl")
+    include("L2i.jl")
     include("Ac.jl")
     include("Un.jl")
     include("Ev.jl")

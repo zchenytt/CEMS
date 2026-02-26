@@ -2,8 +2,27 @@ module Settings
 import JuMP, Gurobi
 
 # The "Crossover=0" option is observed to be too vague (e.g. terminate with a 3% rGap) for certain cases, thus abandoned
-const C = Dict{String, Any}("OutputFlag" => 0, "Threads" => 1, "MIPGap" => 0, "MIPGapAbs" => 0, "Method" => 2)
+# Since Crossover is needed, "Method=2" won't be faster (supposedly)
+
+function reset_param_gap(m)
+    JuMP.set_attribute(m, "MIPGap", 1e-4)
+    JuMP.set_attribute(m, "MIPGapAbs", 1e-10)
+end
+const C = Dict{String, Any}("OutputFlag" => 0, "Threads" => 1, "MIPGap" => 0, "MIPGapAbs" => 0)
 const SAF = JuMP.MOI.ObjectiveFunction{JuMP.MOI.ScalarAffineFunction{Float64}}()
+reset_gurobi_seed(m) = JuMP.set_attribute(m, "Seed", rand(0:2000000000))
+function solve_many_times(m, f_where)
+    pri = JuMP.INFEASIBLE_POINT
+    for k = 0:4
+        JuMP.optimize!(m)
+        pri = JuMP.primal_status(m)
+        pri === JuMP.FEASIBLE_POINT && break
+        @ccall(printf("%s> unsolved at k=%d\n"::Cstring; f_where::Cstring, k::Cint)::Cint)
+        reset_gurobi_seed(m)
+    end
+    pri === JuMP.FEASIBLE_POINT || error("$f_where: $pri")
+end
+
 
 # Benchmark shows that both `@build_constraint` and `add_constraint` are at the best performance
 set_oc_by_dict(o, d::Dict{JuMP.VariableRef, Float64}) = for (x,c)=d setoc(o, x, c) end

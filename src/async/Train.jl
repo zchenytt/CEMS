@@ -4,14 +4,6 @@ import ..Settings
 import ..Ms, ..Ipr
 import JuMP
 
-function summary(#=result_nt=# r)
-    agap = r[:du] - r[:dl]
-    rgap = agap / r[:dl]
-    err = abs(r[:du] - r[:pl]) / max(abs(r[:du]), abs(r[:pl]))
-    rgap_ip = (r[:pi] - r[:dl]) / r[:pi]
-    println("summary> l = $rgap, e = $err, i = $rgap_ip, lagap = $agap")
-end
-
 ################################################
 # sequential programming
 dual_train(K, a...) = for k=1:K
@@ -119,7 +111,11 @@ function subfun(j, n, Locks, Ncuts, ref, out, ipr, COT, #=MinCost true; Feas. fa
     Ms.reset_obj(Locks.ref, ref, n, i)
     JuMP.optimize!(n)
     pri = JuMP.primal_status(n)
-    pri === JuMP.FEASIBLE_POINT || error("subfun> $pri")
+    if pri !== JuMP.FEASIBLE_POINT
+        Settings.reset_gurobi_seed(n)
+        @ccall(printf("subfun> unsolved at j=%d\n"::Cstring; j::Cint)::Cint)
+        return
+    end
     cn, vio = Ms.get_cn_vio(j, n, out, ref, Locks.ref, i)
     if vio > COT
         # @ccall(printf("j=%d, vio=%e\n"::Cstring; j::Cint, vio::Cdouble)::Cint)
@@ -127,14 +123,13 @@ function subfun(j, n, Locks, Ncuts, ref, out, ipr, COT, #=MinCost true; Feas. fa
         Threads.atomic_add!(Ncuts, 1)
         Ipr.add_to_ipr(Locks.p, ipr, n, j)
     end
+    return
 end
 
 # query a valid lower bound 
 function _modify_lb(n, lba, Lk, ref, i)
     Ms.reset_obj(Lk, ref, n, i)
-    JuMP.optimize!(n)
-    pri = JuMP.primal_status(n)
-    pri === JuMP.FEASIBLE_POINT || error("in _modify_lb: $pri")
+    Settings.solve_many_times(n, "_modify_lb")
     Threads.atomic_add!(lba, JuMP.objective_bound(n))
 end
 function modify_lb(tks, inn, lba, Lk, ref, i)
