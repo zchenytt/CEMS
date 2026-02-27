@@ -50,56 +50,70 @@ fill_otr(otr, a...) = (t = otr.x = spawn_out(a...); wait(t))
 spawn_out(a...) = Threads.@spawn(outfun(a...))
 spawn_nwloop(a...) = Threads.@spawn(nwloop(a...))
 spawn_subfun(j, inn, a...)=(n = inn[j]; Threads.@spawn(subfun(j, n, a...)))
-function warm_by_inn(tks, ref, mst, inn, Lk, Ncuts, COT) # Feas. is warmed by inn, whereas MinCost is warmed by ipr
-    for j=eachindex(inn) setindex!(tks, spawn_subfun(j, inn, Lk, Ncuts, ref, mst.f.d, mst.f.p, COT, false), j) end
+function warm_by_inn(tks, ref, mst, inn, Lk, Ncuts, COT, evt) # Feas. is warmed by inn, whereas MinCost is warmed by ipr
+    for j=eachindex(inn) setindex!(tks, spawn_subfun(j, inn, Lk, Ncuts, ref, mst.f.d, mst.f.p, COT, false, evt), j) end
     foreach(wait, tks)
-    outfun(mst.f.d, Lk, ref)
+    outfun(mst.f.d, Lk, ref, evt)
 end
-function outfun(out, Lk, ref)
-    ter = @lock Lk.d opt_and_ter(out)
+function outfun(out, Lk, ref, evt)
+    ter = @lock Lk.d opt_and_ter(out) # optimize! might be time-consuming
     ter === JuMP.OPTIMAL || error("out: $ter")
-    nt = @lock Lk.d Ms.construct_nt(out)
+    nt = @lock Lk.d Ms.construct_nt(out) # here allocates!
     @lock Lk.ref setfield!(ref, :x, nt)
+    notify(evt) # set it in a different thread!
 end
 function set_maxtime(inn, out)
     JuMP.set_attribute(out, "TimeLimit", 360)
     for n=inn JuMP.set_attribute(n, "TimeLimit", 40) end
 end
+
+function _8(otk, Ncuts0, Ncuts, a...)
+    if istaskdone(otk)
+        wait(otk)
+        n = Ncuts.value
+        if n !== Ncuts0
+            otk = spawn_out(a...)
+            Ncuts0 = n
+        end
+    end
+    otk, Ncuts0
+end
+_b(tks, ths) = count(!istaskdone, tks) < ths # returns if `inn-tasks underoccupy hardware resources`
+function _7(J, tks, ths, j, a...)
+    k = 0
+    while _b(tks, ths)
+        t = tks[j]
+        if istaskdone(t)
+            wait(t)
+            setindex!(tks, spawn_subfun(j, a...), j)
+        end
+        j = mod(j, J)+1
+        k === ths && break
+        k += 1
+    end
+    j
+end
 function nwloop( # No Wait Loop--it is _nonblocking_ so you'll have to wait for it subsequently
-    #=non_locals=# Ncuts0, j, otr,
+    #=non_locals=# evt, Ncuts0, j, otr,
     #=bookkeeping=# tks, Lk, ref, out, ipr, inn, COT, Ncuts,
     #=Settings=# THREAD_FOR_BLOCKS, i, MaxSec)
-    otk, J = otr.x, length(inn)
-    D_t = 1_000_000_000 * MaxSec
+    otk, J, D_t, _ = otr.x, length(inn), 1_000_000_000*MaxSec, notify(evt)
     tabs0 = time_ns()
     while true
+        wait(evt) # irredundant as it sets status `false`
         d_t = time_ns() - tabs0
-        # @debug @ccall(printf("t_elapsed=%e\n"::Cstring; d_t / 1e9::Cdouble)::Cint)
+        # t_elapsed = d_t / 1_000_000_000
+        # @ccall(printf("t_elapsed=%e\n"::Cstring; t_elapsed::Cdouble)::Cint)
         d_t > D_t && break
-        if istaskdone(otk)
-            wait(otk)
-            Ncuts_now = Ncuts.value
-            if Ncuts_now !== Ncuts0 && _b(tks, THREAD_FOR_BLOCKS)
-                otk = spawn_out(out, Lk, ref)
-                Ncuts0 = Ncuts_now
-            end
+        otk, Ncuts0 = _8(otk, Ncuts0, Ncuts, out, Lk, ref, evt)
+        j = _7(J, tks, THREAD_FOR_BLOCKS, j, inn, Lk, Ncuts, ref, out, ipr, COT, i, evt)
+        if !evt.set
+            sleep(0.001)
+            notify(evt)
         end
-        Ø = 0
-        while _b(tks, THREAD_FOR_BLOCKS)
-            ø = tks[j]
-            if istaskdone(ø)
-                wait(ø)
-                setindex!(tks, spawn_subfun(j, inn, Lk, Ncuts, ref, out, ipr, COT, i), j)
-            end
-            j = mod(j, J)+1
-            Ø === THREAD_FOR_BLOCKS && break
-            Ø += 1
-        end
-        GC.safepoint()
     end
     otr.x = otk
 end
-_b(tks, ths) = count(!istaskdone, tks) < ths # returns if `inn-tasks underoccupy hardware resources`
 wait3(nwtk, otr, tks) = (wait(nwtk);wait(otr.x);foreach(wait, tks))
 
 function _1(out, n, cn, dualLk) 
@@ -107,7 +121,7 @@ function _1(out, n, cn, dualLk)
     len = Cint(length(ci))
     @lock(dualLk, Settings.addle(o, len, ci, cd, cn))
 end
-function subfun(j, n, Locks, Ncuts, ref, out, ipr, COT, #=MinCost true; Feas. false=# i::Bool)
+function subfun(j, n, Locks, Ncuts, ref, out, ipr, COT, #=MinCost true; Feas. false=# i::Bool, evt)
     Ms.reset_obj(Locks.ref, ref, n, i)
     JuMP.optimize!(n)
     pri = JuMP.primal_status(n)
@@ -122,6 +136,7 @@ function subfun(j, n, Locks, Ncuts, ref, out, ipr, COT, #=MinCost true; Feas. fa
         _1(out, n, cn, Locks.d) # add the violating cut
         Threads.atomic_add!(Ncuts, 1)
         Ipr.add_to_ipr(Locks.p, ipr, n, j)
+        notify(evt) # set it in a different thread!
     end
     return
 end

@@ -23,7 +23,8 @@ begin # containers
     const rST = Dict(k => NaN for k = (:dl, :du, :pl, :pi))
     const Lk = (ref=ReentrantLock(), d=ReentrantLock(), p=ReentrantLock())
     const Ncuts = Threads.Atomic{Int}(0)
-    MaxSec = 2700
+    const evt = Base.Event(true);
+    MaxSec = 900
 end;
 
 begin # build test case
@@ -40,10 +41,10 @@ begin # build test case
 end;
 
 begin # Feas. problem
-    Train.warm_by_inn(tks, ref, mst, inn, Lk, Ncuts, COT) # Feas. only
+    Train.warm_by_inn(tks, ref, mst, inn, Lk, Ncuts, COT, evt) # Feas. only
     Train.set_maxtime(inn, mst.f.d)
-    Train.fill_otr(otr, mst.f.d, Lk, ref)
-    nwtk = Train.spawn_nwloop(Ncuts.value, 1, otr, tks, Lk, ref, mst.f.d, mst.f.p, inn, COT, Ncuts, min(J, 253), false, MaxSec)
+    Train.fill_otr(otr, mst.f.d, Lk, ref, evt)
+    nwtk = Train.spawn_nwloop(evt, Ncuts.value, 1, otr, tks, Lk, ref, mst.f.d, mst.f.p, inn, COT, Ncuts, min(J, 253), false, MaxSec)
 end;
 
 begin # Feas. summary
@@ -65,8 +66,8 @@ begin # Min.Cost problem
     Ipr.warm_ipr(tks, Lk.p, mst.c.p, mst.f.p, inn) # MinCost only
     Ncuts.value = 0
     Train.set_maxtime(inn, mst.c.d)
-    Train.fill_otr(otr, mst.c.d, Lk, ref)
-    nwtk = Train.spawn_nwloop(Ncuts.value, 1, otr, tks, Lk, ref, mst.c.d, mst.c.p, inn, COT, Ncuts, min(J, 253), true, MaxSec)
+    Train.fill_otr(otr, mst.c.d, Lk, ref, evt)
+    nwtk = Train.spawn_nwloop(evt, Ncuts.value, 1, otr, tks, Lk, ref, mst.c.d, mst.c.p, inn, COT, Ncuts, min(J, 253), true, MaxSec)
 end;
 
 begin # Min.Cost summary
