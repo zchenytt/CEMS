@@ -32,7 +32,7 @@ const Cs = Dict(
 )
 
 const F, T = 1, 24
-const J, rho = 64*253, 0.75
+const J, rho = 273, 0.75
 const J1, J2 = J1J2(J, rho)
 const GDiv = 3 # The (only time-dependent) `G`-curtailment cost is (C ÷ 3)
 const C = Cs[F][rand(1:5)]

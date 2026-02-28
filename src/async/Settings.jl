@@ -14,7 +14,7 @@ reset_gurobi_seed(m) = JuMP.set_attribute(m, "Seed", rand(0:2000000000))
 function solve_many_times(m, f_where)
     pri = JuMP.INFEASIBLE_POINT
     for k = 0:4
-        JuMP.optimize!(m)
+        JuMP.optimize!(m) # you need to set TimeLimit in advance, before calling this function
         pri = JuMP.primal_status(m)
         pri === JuMP.FEASIBLE_POINT && break
         @ccall(printf("%s> unsolved at k=%d\n"::Cstring; f_where::Cstring, k::Cint)::Cint)

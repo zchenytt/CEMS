@@ -1,30 +1,22 @@
+# This new program contains new elements such as RES curtailing cost, so a careful comparison to the old code might be not meaningful
 import Random, JuMP
-Random.seed!(hash(7235))
+Random.seed!(hash(2135))
 using EM, EM.In
+import EM.L2i.summary
 Settings.printinfo()
 
-function summary(#=result_nt=# r)
-    agap = r[:du] - r[:dl]
-    rgap = agap / r[:dl]
-    err = abs(r[:du] - r[:pl]) / max(abs(r[:du]), abs(r[:pl]))
-    rgap_ip = (r[:pi] - r[:dl]) / r[:pi]
-    println("summary> l = $rgap, e = $err, i = $rgap_ip, lagap = $agap")
-end;
-
-# This new program contains new elements such as RES curtailing cost, so a careful comparison to the old code might be not meaningful
-
-begin # containers
-    const COT = 1e-5
-    const ref = Ref{Ms.nt_type}()
-    const otr = Ref{Task}(); # outfun--task's ref
+begin
+    MaxSec = 10
+    const Lk = (ref=ReentrantLock(), d=ReentrantLock(), p=ReentrantLock())
+    const Ncuts = Threads.Atomic{Int}(0)    # written by inn, read by out
+    const ref = Ref{Ms.nt_type}()           # written by out, read by inn
+    const otr = Ref{Task}() # outfun--task's ref
     const tks = Vector{Task}(undef, J)
     const inn = Settings.Model(tks)
     const mst = (f = (p=Settings.Model(), d=Settings.Model()), c = (p=Settings.Model(), d=Settings.Model())) # Feas./Cost.; Primal/Dual
-    const rST = Dict(k => NaN for k = (:dl, :du, :pl, :pi))
-    const Lk = (ref=ReentrantLock(), d=ReentrantLock(), p=ReentrantLock())
-    const Ncuts = Threads.Atomic{Int}(0)
-    const evt = Base.Event(true);
-    MaxSec = 900
+    const evt = Base.Event(true)
+    const COT = 1e-5
+    const rST = Dict(k => NaN for k = (:dl, :du, :pl, :pi)) # dual ub/lb; primal linear/integer objval
 end;
 
 begin # build test case
@@ -43,16 +35,16 @@ end;
 begin # Feas. problem
     Train.warm_by_inn(tks, ref, mst, inn, Lk, Ncuts, COT, evt) # Feas. only
     Train.set_maxtime(inn, mst.f.d)
-    Train.fill_otr(otr, mst.f.d, Lk, ref, evt)
-    nwtk = Train.spawn_nwloop(evt, Ncuts.value, 1, otr, tks, Lk, ref, mst.f.d, mst.f.p, inn, COT, Ncuts, min(J, 253), false, MaxSec)
+    otr.x = Threads.@spawn(identity); wait(otr.x)
+    stk = Train.ss(evt, 1, otr, tks, Lk, ref, mst.f.d, mst.f.p, inn, COT, Ncuts, min(J, 253), false, MaxSec)
 end;
 
 begin # Feas. summary
-    Train.wait3(nwtk, otr, tks)
-    rST[:du] = ref.x.ub; 
-    lba = Threads.Atomic{Float64}(ref.x.common);
-    Train.modify_lb(tks, inn, lba, Lk.ref, ref, false);
-    rST[:dl] = lba.value;
+    Train.wait3(stk, otr, tks)
+    rST[:du] = ref.x.ub 
+    lba = Threads.Atomic{Float64}(ref.x.common)
+    Train.modify_lb(tks, inn, lba, Lk.ref, ref, false)
+    rST[:dl] = lba.value
     EM.L2i.complete_LP(mst.f.p)
     P_A = EM.L2i.LP2IP(mst.f.p, MaxSec, false, rST) + 5.678
     summary(rST)
@@ -61,17 +53,17 @@ end;
 begin # Min.Cost problem
     Ms.build_master(mst.c.d, P_A, 0, ref)
     Ms.initialize_inn(inn, mst.c.d[:θ], mst.c.d[:β])
-    Ms.warm_out_by_ipr(Lk.d, tks, mst.c.d, mst.f.p, inn) # MinCost only
+    Ms.warm_out_by_ipr(Lk.d, tks, mst.c.d, mst.f.p, inn, Ncuts) # MinCost only
     Ipr.build_ipr(mst.c.p, inn)
     Ipr.warm_ipr(tks, Lk.p, mst.c.p, mst.f.p, inn) # MinCost only
     Ncuts.value = 0
     Train.set_maxtime(inn, mst.c.d)
-    Train.fill_otr(otr, mst.c.d, Lk, ref, evt)
-    nwtk = Train.spawn_nwloop(evt, Ncuts.value, 1, otr, tks, Lk, ref, mst.c.d, mst.c.p, inn, COT, Ncuts, min(J, 253), true, MaxSec)
+    otr.x = Threads.@spawn(identity); wait(otr.x)
+    stk = Train.ss(evt, 1, otr, tks, Lk, ref, mst.c.d, mst.c.p, inn, COT, Ncuts, min(J, 253), true, MaxSec)
 end;
 
 begin # Min.Cost summary
-    Train.wait3(nwtk, otr, tks)
+    Train.wait3(stk, otr, tks)
     rST[:du] = ref.x.ub;
     lba.value = ref.x.common;
     Train.modify_lb(tks, inn, lba, Lk.ref, ref, true);

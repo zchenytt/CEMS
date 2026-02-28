@@ -3,6 +3,13 @@ import ..Settings
 import ..In: J1, J2, T, F, _s
 import JuMP, Dates, JLD2
 here_now() = Dates.now() + Dates.Hour(8)
+function summary(#=result_dict=# r)
+    agap = r[:du] - r[:dl]
+    rgap = agap / r[:dl]
+    err = abs(r[:du] - r[:pl]) / max(abs(r[:du]), abs(r[:pl]))
+    rgap_ip = (r[:pi] - r[:dl]) / r[:pi] # this is the global gap
+    println("summary> l = $rgap, e = $err, i = $rgap_ip, lagap = $agap")
+end
 
 #= There are 2 ways to enforce integrality---add to expression or add to coefficients (i.e. raw decisions)
 we opt to follow the definition and add integrality to the resulting expression
@@ -26,7 +33,7 @@ function LP2IP(#=ipr=# m, MaxSec, ismC, r)
         foreach(c -> _8(c, 0.), m[:c])
     end
     Settings.reset_param_gap(m)
-    JuMP.set_attribute(m, "TimeLimit", MaxSec/3)
+    JuMP.set_attribute(m, "TimeLimit", max(60.0, MaxSec/3))
     JuMP.optimize!(m)
     JuMP.primal_status(m) === JuMP.FEASIBLE_POINT || error(JuMP.termination_status(m), JuMP.primal_status(m))
     r[:pi] = bound = JuMP.objective_value(m) # primal integer
