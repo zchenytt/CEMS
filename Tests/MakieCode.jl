@@ -7,7 +7,7 @@ pk = [4, 5, 9]
 pn = [1, 2, 3]/40
 
 f = Figure(; size = (500, 250), figure_padding = 0)
-ax = Axis(f[1,1]; xlabel = "Multiple of the Base Solve Time", ylabel = "Proportion of Instances Solved",
+ax = Axis(f[1,1]; xlabel = "Multiplier to the Base Solve Time", ylabel = "Proportion of Instances Solved",
 xticks = [1, 4, 5, 9, 10], yticks = [0, 3/40, 29/40, 1]);
 stairs!(ax, k, n; label = "centralized optimization", step = :post)
 scatter!(ax, pk, pn)
