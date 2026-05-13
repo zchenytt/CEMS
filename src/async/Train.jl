@@ -62,6 +62,32 @@ function warm_by_inn(tks, ref, mst, inn, Lk, Ncuts, COT, evt) # Feas. is warmed 
     ref.x = Ms.construct_nt(out, ref, 1)
 end
 
+function other_async_method(out, Lk, ref, Ncuts, evt, inn, ipr, COT, i, MaxSec)
+    t0 = time_ns()
+    while true
+        _outfun(out, Lk, ref, Ncuts, evt)
+        1e-9 * (time_ns() - t0) < MaxSec || break
+        Threads.@threads for j = In.J1
+            subfun(j, inn[j], Lk, Ncuts, ref, out, ipr, COT, i, evt)
+        end
+        _outfun(out, Lk, ref, Ncuts, evt)
+        Threads.@threads for j = In.J2
+            subfun(j, inn[j], Lk, Ncuts, ref, out, ipr, COT, i, evt)
+        end
+    end
+end
+
+function other_sync_method(out, Lk, ref, Ncuts, evt, inn, ipr, COT, i, MaxSec)
+    t0 = time_ns()
+    while true
+        _outfun(out, Lk, ref, Ncuts, evt)
+        1e-9 * (time_ns() - t0) < MaxSec || break
+        Threads.@threads for j = 1:In.J
+            subfun(j, inn[j], Lk, Ncuts, ref, out, ipr, COT, i, evt)
+        end
+    end
+end
+
 function subfun(j, n, Lk, Ncuts, ref, out, ipr, COT, #=MinCost true; Feas. false=# i::Bool, evt)
     nt = @lock(Lk.ref, ref.x)
     k1 = nt.k
