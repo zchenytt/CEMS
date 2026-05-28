@@ -575,26 +575,6 @@ Thanks for your careful reading and constructive comments. We hope the following
         About the scalability, they considered at most 100 prosumers.
         While in our tests, neighborhoods with tens of thousands of households are investigated.
     \end{enumerate}
-    % \item \textbf{Feasibility can be established in advance.} \label{feasibility}
-    % An optimization problem \textit{is nothing but} a feasibility system plus an objective function (
-    % and the sense being `Min' or `Max').
-    % In engineering context it make sense to assume that we are \textit{already} aware of at least one
-    % feasible solution---though we may not be able to enumerate all possible solutions and
-    % be clear about which particular solution leads to the minimum cost a priori.
-    % On how to procure a feasible solution, see post \#5--6 in
-    % \url{https://discourse.julialang.org/t/initial-guess-is-not-an-interior-point-in-optimization-methods/133727/5}.
-    % \item \textbf{How to warm up?} \label{warm-up}
-    % All decomposition algorithm needs to be warm up properly, including Benders decomposition,
-    % dual decomposition, no matter you are doing stochastic programming or robust optimization or
-    % distributionally robust optimization.
-    % Since it is asked by the reviewers, we answer it here.
-    % But we are not planning to write this in detail in our main paper---this really is basic
-    % knowledge, and the issue `how to warm up' occurs in every research paper
-    % that uses decomposition, and the warm-up strategy is not unique (it is customizable).
-    % \par
-    % According to the strong duality of linear programming, a finite dual bound can be procured
-    % if you are aware of a primal feasible solution.    
-    % The basic idea is to prepare feasible solutions on the primal side.
 \end{enumerate}
 
 
