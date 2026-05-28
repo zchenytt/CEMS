@@ -1,0 +1,105 @@
+\documentclass[11pt]{article}
+\usepackage[a4paper,margin=1in]{geometry}
+% \usepackage[a4paper,margin=0.1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage[dvipsnames]{xcolor}
+\usepackage{hyperref}
+\usepackage{enumitem}
+
+\newcommand{\sect}[1]{\textbf{Section}~\ref{#1}}
+\newcommand{\faq}[1]{\textbf{FAQ}~\ref{#1}}
+\newcommand{\rtwo}[1]{\textbf{R2}~\ref{#1}}
+\newcommand{\blue}[1]{\textcolor{blue}{#1}}
+
+\begin{document}
+\begin{center}
+    {\Large \textbf{Response Letter}}\\[1ex]
+    \textbf{Manuscript ID:} TSG-02572-2025.R1\\
+    \textbf{Title:} ``A Distributed Multi-Energy Optimal Coordination Scheme Exploiting Neighborhood Flexibility''
+\end{center}
+
+We sincerely thank you for your careful reading of the manuscript and the detailed comments.
+\par
+If a \blue{modification} to the manuscript has been made, we would display them in \blue{blue} color\footnote{Details are seen in the PDF with tracked changes, wherein the newly added texts are also in blue color.}.
+\par
+We hope that our revisions have properly addressed your concerns.
+Please let us know if any issues remain that require further clarification.
+
+\section{Editor1 Question}
+\textsf{While appreciating the revision efforts made by the authors, one reviewer has still serious concerns regarding theoretical analysis. For instance, convergence should be established. Comparison with existing distributed algorithms, synchronous and asynchronous, is necessary. More detailed quantitative metrics are needed to evaluate the performance of the algorithm.}
+\par
+Answer: Thanks for your careful reading and constructive comments. We think we've answered in Section~\ref{r2ans}.
+
+\section{Reviewer2 Question (answered in Section \ref{r2ans})}
+\begin{enumerate}
+    \item The paper describes an interesting implementation, but lacks rigorous theoretical analysis for asynchronous distributed mixed-integer linear programming (MILP). Claims regarding convergence are not theoretically justified, particularly under stale information from asynchronous cutting plane updates. The impact of delayed or outdated cutting planes on convergence behavior and bound quality is not analyzed or proven. 
+    \item Primal feasibility recovery relies on heuristic strategies without formal guarantees.
+    \item Furthermore, no comparisons with existing asynchronous distributed optimization methods are provided, while the authors only compare against the centralized Gurobi solver. Since centralized MILP solvers are not designed for distributed or asynchronous environments, this comparison is inadequate and cannot demonstrate the advantages of the proposed method in scalability, communication efficiency, or robustness to network imperfections. Major revision is required. To properly validate the contribution, the authors should: Provide a direct comparison between synchronous and asynchronous variants of the proposed algorithm;
+    \item Evaluate performance under communication delays, packet loss, and heterogeneous computation speeds;
+    \item Include quantitative metrics such as iteration efficiency, idle waiting time, processor utilization, and robustness to stale information.
+\end{enumerate}
+
+\section{Answers}\label{r2ans}
+
+\begin{enumerate}
+    \item Thanks for your careful reading and constructive comments. We hope the following reply clarifies your concern. Our theory is actually rigorous. \textcolor{blue}{Finite convergence is guaranteed} (regarding theory aspects. In practical computation, however, we have finite termination). The trial point may be outdated but it doesn't affect the validity of the cuts nor does it affect finite convergence. For details see \faq{finiteConverge}\faq{ctplnalgo}. 
+    \item see \faq{primalfeas}
+    \item \textcolor{blue}{We've added TABLE I in the revised manuscript.}
+    \item \textcolor{blue}{We've added TABLE II in the revised manuscript.} Additionally, the related concepts had been analyzed in our previous response letter (FAQ 13 therein). For clarity and relevance we restate it in \faq{imperfectcommunication}.
+    \item \textcolor{blue}{We've added Figure 4 in the revised manuscript.} Additionally, we would like to point out that in a practical MILP computation context we almost surely only care about overall performance (for example, spend how many seconds to reach what extent of optimality gap). High utilization of hardware resource doesn't necessarily mean better performance, either in terms of a multi-core cpu, or some other more tricky concepts like memory bandwidth (which is also likely to be the bottleneck). Stale trial point won't affect the overall convergence since the validity of cuts are always ensured.
+\end{enumerate}
+
+
+\section{FAQ} \label{faqsect}
+\begin{enumerate}
+    \item \textbf{Finite convergence} \label{finiteConverge}
+    \textcolor{blue}{We have revised our manuscript (see Theorem 4 and the reasoning before it) so it is now indeed rigorous.} We note that our eventual goal is to solve that system-level MILP (26). But since that is a large-scale MILP, it is intrinsically NP-hard. Therefore our goal is instead to approach the Lagrangian dual bound $z^\mathrm{L}$.
+    Now the basic conclusion is: the cutting plane algorithm employed to solve that dual optimization (i.e. the concave maximization problem (44)) \textbf{can recover} $z^\mathrm{L}$ after finitely many re-optimizations. (see our revised manuscript for a rigorous reasoning.)
+    Actually this conclusion is not new and it is not specific to Lagrangian dual decomposition, e.g. it was stated in the Algorithm 1 in \cite{chenrui2022}, where the cutting plane algorithm is employed to solve a concave maximization problem with an implicit function defined by another MILP subproblem.
+
+    \item \textbf{Cutting plane algorithm} \label{ctplnalgo} We would like to point out that our dual optimization is based on a pure \textit{cutting plane method} (as opposed to, for example a step-size based subgradient method). The fundamental idea is to establish a cutting plane model (i.e. the dual master problem (50)). All the essential claims \textit{had been} presented as Theorem~3--6, which by themselves are \textit{sufficient} for all our purposes. There are two important \textit{independent} concepts here: \begin{enumerate}
+        \item trial point ($\hat{\boldsymbol{\beta}}$) generated during the training---whether they are `fresh' or relatively `stale'.
+        \item validity of all the cuts generated during the training. (\textit{These will never be stale.})
+    \end{enumerate}
+    The validity of the cutting plane generated is totally not affected, no matter what the trial point $\hat{\boldsymbol{\beta}}$ is---all the cuts are valid for all $\boldsymbol{\beta} \ge 0$. (As a disgression, for example, in Benders decomposition, we \textcolor{magenta}{may even generate invalid integer-infeasible trial points}, yet we only need to ensure the validity of the lagrangian cuts. See e.g. \cite{thebdd})
+    \par
+    In other words, the trial point generation is totally decided by the existing cutting plane model (as opposed to a subgradient method, in which the trial point generated at k--th iterate stems from the (k-1)--th iterate added by a displacement with a particular step length. Different types of algorithms have different analysis methods)
+    \par
+    As for our asynchronous cutting plane algorithm, it is only a sensible implementation that can expedite cut generation. There is simply no theoretical issue here pertaining to correctness/validity.
+
+    \item \textbf{Primal feasibility recovery} \label{primalfeas} The essential idea of our block decomposition is to solve a Lagrangian dual optimization problem, which aims at recovering the dual bound $z^\textrm{L}$. The interesting thing here is that during this dual optimization we have opportunities to collect a set of primal-side (integer-feasible) vertices for each block as by-products. Finally when doing the primal feasibility recovery, we may incidentally find coordinated solutions that yield less cost (i.e. better objective value). So, yes indeed---it is a heuristic. But the facts are:
+    \begin{enumerate}
+        \item This heuristic typically works well in practice. (when the number of block $\mathrm{J}$ goes larger, the integrality gap tends to shrink, as stated in Bertsekas' book, for instance).
+        \item We starts our cutting plane training from a warmed-up state, so there always exists a feasible solution. (We're very likely to find other coordinated solutions after the training, according to the experiment results.)
+        \item Otherwise there are no better known alternative algorithms (as can be observed, the centralized monolithic optimization is impractical).
+    \end{enumerate}
+
+    \item \textbf{Our algorithm can intrinsically deal with imperfect communication.}
+    \label{imperfectcommunication} Our cutting plane theory is fundamentally compatible with
+    the asynchronous programming functionality in julia. 
+    In other words, all the validity assertions carries over from the sequential programming
+    field to asynchronous programming field that we are now working with.
+    In our experiments, different blocks are \textit{already} having heterogeneous optimization times (as their respective MILP subproblems are having different complexities).
+    From the viewpoint of the coordinator, the optimization time of a block is not distinguishable from its communication-delayed time---they add up to form a `feedback time' of the block.
+    Therefore, the system excluding those abnormal parts would still work as usual (Actually, our experiment results in Section V are derived under heterogeneous feedback times).
+    Inherently speaking, nothing is complicated:\begin{enumerate}
+        \item block failure is nothing but a prolonged packet loss 
+        \item data loss $\equiv$ packet loss
+        \item packet loss is nothing but a prolonged communication delay
+        \item heterogeneous update rates is actually \textit{the normal state} in our setting
+    \end{enumerate}
+    To conclude, our method \textit{is designed in such a way} to be able to handle imperfect communication conditions \textit{as usual}.
+    
+\end{enumerate}
+
+\begin{thebibliography}{1}
+\bibliographystyle{IEEEtran}
+
+\bibitem{chenrui2022}
+Rui Chen, James Luedtke (2022) On Generating Lagrangian Cuts for Two-Stage Stochastic Integer Programs. INFORMS Journal on Computing 34(4):2332-2349.
+\bibitem{thebdd}
+Ragheb Rahmaniani, Shabbir Ahmed, Teodor Gabriel Crainic, Michel Gendreau, Walter Rei (2020) The Benders Dual Decomposition Method. Operations Research 68(3):878-895.
+
+\end{thebibliography}
+
+\end{document}
