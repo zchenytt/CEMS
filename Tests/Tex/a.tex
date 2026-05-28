@@ -1,0 +1,1174 @@
+\documentclass[journal]{IEEEtran}
+\usepackage{amsmath,amsfonts,amssymb}
+\usepackage{graphicx}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{array}
+\usepackage[colorlinks=true,
+            linkcolor=blue,
+            citecolor=blue,
+            urlcolor=black
+]{hyperref}
+\usepackage[caption=false,font=normalsize,labelfont=sf,textfont=sf]{subfig}
+\usepackage{stfloats} % <-this % stops a space
+\usepackage{cite} % pdflatex -output-directory=tex/powerSys2025 tex/powerSys2025/a.tex
+\newtheorem{theorem}{Theorem}
+\newtheorem{formulation}{Formulation}
+\newtheorem{lemma}{Lemma}
+\newcommand{\boxend}{\hfill $\Box$}
+\newcommand{\tableref}[1]{TABLE~\ref{#1}}
+\newcommand{\lineref}[1]{Line~\ref{#1}}
+\newcommand{\algorithmref}[1]{Algorithm~\ref{#1}}
+\newcommand{\formulationref}[1]{Formulation~\ref{#1}}
+\newcommand{\lemmaref}[1]{Lemma~\ref{#1}}
+\newcommand{\theoremref}[1]{Theorem~\ref{#1}}
+\begin{document}
+
+\title{A Distributed Multi-Energy Optimal Coordination Scheme \\ Exploiting Neighborhood Flexibility}
+
+\author{Zhang Chen, Jun Liu \IEEEmembership{Senior Member, IEEE}
+\thanks{This work was supported by National Key Research and Development Program of China under Grant 2024YFB2408400.}
+\thanks{The authors are with the School of Electrical Engineering, Xi'an Jiaotong University, Xi'an 710049, China (%
+    e-mail: zchenytt@gmail.com, eeliujun@mail.xjtu.edu.cn%
+).}
+}
+
+\maketitle
+\begin{abstract}
+    The optimal coordination of distributed energy resources in large residential neighborhoods
+    presents a critical and computationally challenging problem in demand-side management.
+    To fully exploit demand-side flexibility, we propose a decentralized scheme
+    to address this challenge, in which multiple energy sources and social interactions among residents
+    are taken into account.
+    Local operations are cast as mixed-integer subproblems, organized into blocks to integrate social factors,
+    while several linking constraints are enforced at the neighborhood level.
+    Exploiting this structure, we propose to tackle the dual problem in a distributed
+    manner, followed by primal feasibility recovery.
+    The cutting plane algorithm presented is novel in its asynchronous concurrent mechanism, and its
+    efficiency is validated through multiple tests across various problem configurations.
+    In a one-device-per-block setting with 443 households, our algorithm is able to find relative gap $<0.1\%$ solutions in 2 minutes.
+    In a large-scale test with millions of decision variables out of 28336 households, our algorithm managed to
+    find relative gap $<0.01\%$ solutions within 310 seconds.
+    Unlike existing studies using mainly synchronized algorithms in simulations, ours reflects realistic operating conditions better.
+    Our results demonstrate the effectiveness and applicability of the proposed methodology in addressing
+    complex real-world coordination problems.
+\end{abstract}
+\begin{IEEEkeywords}
+Block decomposition, large-scale distributed optimization, asynchronous programming, residential energy flexibility, demand response aggregation
+\end{IEEEkeywords}
+
+\section{Introduction}\label{section:one}
+\IEEEPARstart{T}{he} proliferation of distributed energy resources in recent
+decades has paved the way for the exploitation of load flexibility in residential neighborhoods \cite{market2025, energymanagement2017, smartHEMS2021}.
+For this purpose, demand response programs enable residential customers to adjust
+their energy consumption in line with their available appliances, thereby facilitating
+participation in local energy management or market mechanisms \cite{integratedDR2023}.
+\par
+Beyond the flexibility provided by the physical layer, which is based on the operation
+of energy-serving facilities, human behavior and interpersonal activities also contribute
+in shaping energy consumption patterns \cite{cpss2022}.
+Besides, with the advent of multicarrier energy technologies,
+not only the economical operation of the system can be enhanced to a higher extent,
+but the alternative energy supply options for the customers are also diversified \cite{multicarrier2022}.
+However, how to effectively factor such innovative technologies into demand response schemes
+for large residential neighborhoods is still an open challenge.
+Apart from being motivated by these new trends, this work is informed by the
+advances in decision-support software and the growing availability of smart meters.
+For example, MILP solvers are becoming more powerful so the dynamics of certain
+controllable devices can be described directly via discrete decisions.
+Distributed and concurrent computing remains a key paradigm and is anticipated to gain
+even greater importance in demand side energy management applications.
+\par
+From the standpoint of an individual household in a residential neighborhood, its energy consumption
+pattern can be managed by a home energy management system (HEMS).
+An HEMS involving thermal and electrical loads
+was established via a mixed integer linear programming (MILP) formulation in \cite{HEMS2018}.
+A robust optimization method concerning economic and discomfort metrics over a
+multicarrier energy system in a smart home was proposed in \cite{integrated2023}.
+At the neighborhood level, an incentive-based real-time residential demand response
+program involving nonlinear thermal dynamics and customer behavior transitions
+was designed in \cite{chenxin2021}.
+A scalable demand response considering robustness against the uncertainties
+in electricity prices and renewable resources was proposed in \cite{kim2013}
+using mixed integer programming techniques.
+A nonconvex demand response program that decomposes into households
+and considers device coupling relations was proposed in \cite{fast2016},
+which was solved by a double smoothed gradient algorithm.
+A distributed stochastic dual gradient algorithm for managing dynamic devices in
+a distribution grid was implemented in \cite{async2020}, where asynchronous
+controls were conducted in different time scales.
+A demand response technique that reduces peak to average ratio of power demand
+was introduced in \cite{heuristic2019}, where a hopping heuristic method was
+adopted to alleviate communication burden.
+A decentralized framework on demand response of residential customers
+via a bilevel optimization was proposed in \cite{orlm2016}, where objectives at
+both levels are coordinated in favor of improving the system load profile.
+A distributed residential neighborhood energy consumption optimization
+based on the alternating direction method of multipliers was proposed in
+\cite{neighborhood2021}, where the secure operation of the grid is considered.
+A centralized genetic algorithm crossover approach which jointly schedules
+multiple houses in an energy community was proposed in \cite{community2024},
+where multiple houses are allowed to share photovoltaic resources
+as opposed to individual scheduling.
+An energy sharing framework considering the socio-economic preferences
+of members toward various energy products was proposed in \cite{preference2024},
+where a centralized robust Stackelberg game was established to determine energy
+price signals.
+A framework for coordinating household distributed energy resources
+in a residential area was proposed in \cite{dw2019}, where column generation,
+Dantzig-Wolfe decomposition and diving heuristics were adopted to solve
+the MILP problem in a decentralized manner.
+An asynchronous distributed method for coordinating the distribution system operator and
+virtual power plants considering communication delay or failures was proposed in \cite{wang2023},
+in which a hybrid alternative direction method of multipliers (ADMM) algorithm was developed.
+A best response learning method and its associated asynchronous ADMM for real-time
+energy sharing under communication delay was proposed in \cite{wu2025}, in which
+the coordinator can simulate the delayed response of prosumers and proceed its iteration.
+\par
+Methods on tackling the coordination problem (some called aggregation problem) are diverse,
+including ADMM \cite{wang2023}\!\!\cite{wu2025}, Benders decomposition\cite{liu2024}, dual decomposition \cite{chenxin2021}\!\!\cite{kim2013},
+Dantzig-Wolfe decomposition \cite{dw2019}, game theory \cite{orlm2016}\!\!\cite{preference2024}
+and heuristic methods \cite{heuristic2019}.
+Some work still rely on centralized algorithms e.g. \cite{community2024}\!\!\cite{preference2024},
+while some work seeks only local or near optimality either because of the nonconvexity of
+their models \cite{chenxin2021} or the algorithmic design choice in favor of speed \cite{fast2016}.
+More importantly, many existing studies only tested their methods on medium-scaled instances,
+e.g. \cite{chenxin2021}\!\!\cite{orlm2016} only concerned about 500 households, \cite{fast2016}
+concerned $<3000$ households, \cite{wu2025} considered $\le 100$ prosumers in a real-time setting.
+Although \cite{dw2019} considered a neighborhood with up to 8192 households, in which
+integer decisions are involved, their simulations were conducted with sequential programming
+under the hood.
+The idea ``online asynchronous distributed algorithm'' was proposed in \cite{async2020},
+but that term merely referred to the relative updating frequency of the device states.
+The experiment result in \cite{wang2023} shows that their proposed decomposition method can be slower than the centralized counterpart, suggesting that there is still room for refinement on devising decomposition algorithms.
+\par
+Given these research gaps, this paper proposes a decentralized scheme for coordinating
+multi-energy consumption in a residential neighborhood, in which the effect of social
+contacts between pairs of households are taken into account.
+Coordination of the resources in the neighborhood is done in a distributed manner,
+so the private device information of customers is preserved.
+The proposed block decomposition algorithm has a natural and concise design, yet has
+been shown to be capable of finding high-accuracy, global optimal solutions with a tight time budget.
+Contributions are mainly:
+\begin{itemize}
+    \item An MILP based energy resource coordination framework in a residential neighborhood
+    is established. A \textit{block} concept is introduced between households and the coordinator,
+    in which the local flexibility stemming from social contacts between households can be accommodated.
+    The thermal load of a household admits an alternative direct supply besides relying on indoor ACs (air conditioner).
+    \item A cutting plane based block decomposition algorithm is proposed following the
+    asynchronous programming paradigm, so the real-world pattern of distributed computing is respected.
+    Stemming naturally from dual decomposition theory, our algorithm is free of sophisticated
+    stabilization techniques, yet exhibits adequate performance in large-scale tests.
+    \item Detailed simulations are conducted to showcase the effectiveness and efficiency of
+    the proposed algorithm and to confirm the benefits of considering flexibilities from
+    multi-energy and social factors. Unlike simulations conducted in other existing researches,
+    we properly made use of multithreaded asynchronous programming to assure the faithfulness
+    of our results in reflecting real-world distributed optimization mechanisms.
+\end{itemize}
+\par
+The remainder of this paper is organized as follows.
+Operational models from devices, households, blocks to the neighborhood coordinator are presented in Section~\ref{section:two}.
+The theories that underpin the block decomposition algorithm are expounded in Section~\ref{section:three}.
+The decentralized main algorithm is introduced in Section~\ref{section:four}.
+A series of case studies with their results are reported in Section~\ref{section:five},
+and conclusions are drawn in Section~\ref{section:six}.
+
+\section{Modeling: From Devices to the Coordinator}\label{section:two}
+Four concepts—device, household, block, and neighborhood—ranging from micro to macro scales are introduced in this section.
+Neighborhood-level operational states are controlled by a \textit{coordinator} (aka an aggregator).
+The \textit{block} concept is novel, with which social factors can be involved.
+Fig. \ref{diagram} serves as an overview of the objects to be introduced.
+\begin{figure}[!t]
+    \centering
+    \includegraphics[width=2.7in]{diagram.pdf}
+    \caption{Factors of the coordination model proposed. Two-way communications exist only
+    between the coordinator and each individual block.
+    Paired blocks accommodate possible social interactions.
+    Cooling demand within a household can be met via electric AC \textit{or} district cooling (\textit{or} both simultaneously).}
+    \label{diagram}
+\end{figure}
+\par
+A \textit{household} is the smallest unit in which residents' electric and thermal demands are met.
+Six classes of \textit{device}s are potentially owned by a household \cite{dw2019}:
+uncontrollable loads (D), renewable resources (G), energy storage system (ES),
+uninterruptible loads (U), deferrable loads (EV) and air conditioner (AC).
+As for the thermal load, we also consider the option where there is a \textit{direct} energy supply
+which does not undergo an electric-thermal energy conversion that AC does.
+Besides, a form of social contact is allowed to exist \textit{between} pairs of households,
+embodied in the charging management of EVs (regarding this \textit{social} concept, see e.g. \cite{cpss2022}). 
+In the following equations, decision variables are written \textit{italic} (particularly, binary decisions are all signified via $b$) whereas
+parameters are typically UPRIGHT.
+We start with device models \textit{within a household}, 
+where the household index $h$ is hidden for tidiness.
+To the same end, we omit the annotation $\forall t \in 1\!:\!\mathrm{T}$ which means
+``for the whole planning horizon''.
+The length of each time step is denoted by $\Delta t$.
+So the duration of the planning is $\mathrm{T}\Delta t$ (=24 hours in this paper).
+\par
+For a household equipped with renewable resources such as rooftop solar panels,
+it is common practice to install an ES to enhance electricity utilization.
+The renewable generation $\mathrm{G}_t$ is assumed to be curtailable to
+a usable part $p^\mathrm{G}_t$ as shown in \eqref{eq:G}, where the curtailment variable is
+denoted by $\varpi_t$.
+The state of energy in the storage system follows the dynamics in \eqref{es:state_eq},
+and should stay within the range in \eqref{es:e_range}.
+The charging/discharging power are restricted in \eqref{es:pc_interval}\eqref{es:pd_interval}.
+And \eqref{es:c_d_logic} dictates that charging and discharging cannot happen simultaneously.
+Note that $e_0$ in \eqref{es:state_eq} is an initial state, i.e. not a decision.
+We can also require the parameter $\mathrm{E}^\mathrm{MIN}_\mathrm{T}$ in \eqref{es:e_range} to be
+higher than other $\{\mathrm{E}^\mathrm{MIN}_t: t < \mathrm{T}\}$ to prevent the end-of-horizon
+effect where the remnant energy tends to be depleted.
+It is also worth noting that if
+$\mathrm{P}^\mathrm{C, MIN}$ \textit{or} $\mathrm{P}^\mathrm{D, MIN}$ \textit{is} $0$,
+we can save one binary decision between the two which we are currently employing
+(hence also save the constraint \eqref{es:c_d_logic}).
+\begin{equation}\label{eq:G}
+    p^\mathrm{G}_t := \mathrm{G}_t - \varpi_t \qquad 0 \le \varpi_t \le \mathrm{G}_t
+\end{equation}
+\begin{equation}\label{es:state_eq}
+    \Delta t \: (\eta^\mathrm{C} p^\mathrm{ES, C}_t - p^\mathrm{ES, D}_t/\eta^\mathrm{D}) = e_t - e_{t-1}
+\end{equation}
+\begin{equation}\label{es:e_range}
+    \mathrm{E}^\mathrm{MIN}_t \le e_t \le \mathrm{E}^\mathrm{MAX}
+\end{equation}
+\begin{equation}\label{es:pc_interval}
+    \mathrm{P}^\mathrm{C, MIN} b_t^\mathrm{ES, C} \le p^\mathrm{ES, C}_t \le \mathrm{P}^\mathrm{C, MAX} b_t^\mathrm{ES, C}
+\end{equation}
+\begin{equation}\label{es:pd_interval}
+    \mathrm{P}^\mathrm{D, MIN} b_t^\mathrm{ES, D} \le p^\mathrm{ES, D}_t \le \mathrm{P}^\mathrm{D, MAX} b_t^\mathrm{ES, D}
+\end{equation}
+\begin{equation}\label{es:c_d_logic}
+    b_t^\mathrm{ES, C} + b_t^\mathrm{ES, D} \le 1
+\end{equation}
+\par
+Uninterruptible load refer to devices that cannot be halted once in operation.
+Within a household, we suppose there are $|\textrm{U}|$ such devices, indexed by $i$,
+each having $\mathrm{L}_i$ phases.
+The desired power for device $i$ at its phase $l$ is denoted by $\mathrm{P}^\mathrm{U}_{i, l}$.
+Decision $b^\mathrm{U}_{i, t}$ ``=1'' means ``device $i$ starts its first phase at $t$''.
+One device starts only once, whence the constraint \eqref{bu:sum}.
+The power consumed by device $i$ at time $t$ is either $0$ or one of the desired powers at some phase $l$,
+as depicted in \eqref{pu:def}.
+Note that if the subscript $t - (l-1) < 1$, it is circular-shifted to the end of horizon,
+i.e. $b^\mathrm{U}_{i, \boldsymbol{\cdot}} := b^\mathrm{U}_{i, \boldsymbol{\cdot} + \mathrm{T}}$.
+The uninterruptible load in total at $t$ is thus given by \eqref{pu:t}.
+\begin{equation}\label{bu:sum}
+    \sum_{t = 1}^\mathrm{T} b^\mathrm{U}_{i, t} = 1
+\end{equation}
+\begin{equation}\label{pu:def}
+    p^\mathrm{U}_{i, t} := \sum_{l=1}^{\mathrm{L}_i} b^\mathrm{U}_{i, t - (l-1)} \mathrm{P}^\mathrm{U}_{i, l}
+\end{equation}
+\begin{equation}\label{pu:t}
+    p^\mathrm{U}_t := \sum_{i = 1}^{|\mathrm{U}|} p^\mathrm{U}_{i, t}
+\end{equation}
+\par
+Thermal load refers to the demand of regulating indoor temperature,
+as in \eqref{o:interval}, where $\mathrm{O}^\mathrm{MAX}$ is the highest
+temperature that a householder can tolerate and $\mathrm{O}^\Delta$ is the
+length of the comfort interval (without loss of generality,
+the demand is assumed to be cooling).
+The evolution of the indoor temperature follows \eqref{o:state_eq}, where
+INR/CND is the thermal inertia/conductance of the house.
+$\mathrm{O}_t$ is the outdoor temperature.
+$\mathrm{Q}^\mathrm{I}_t$ signifies the indoor heat gain resulting from human activities etc.
+Possibly two options exist for the cooling demand: using electric $p^\mathrm{AC}_t$,
+or direct cooling supply $q_t$, both are confined to be within some range \eqref{pAC:interval}\eqref{q:bus}.
+\begin{equation}\label{o:interval}
+    \mathrm{O}^\mathrm{MAX} - \mathrm{O}^\Delta \le o_t \le \mathrm{O}^\mathrm{MAX}
+\end{equation}
+\begin{equation}\label{o:state_eq}
+    \mathrm{CND}(\mathrm{O}_t - o_t) + \mathrm{Q}^\mathrm{I}_t - q_t - \mathrm{COP} p^\mathrm{AC}_t = \mathrm{INR}(o_{t+1}-o_t)
+\end{equation}
+\begin{equation}\label{pAC:interval}
+    0 \le p^\mathrm{AC}_t \le \mathrm{P}^\mathrm{AC}
+\end{equation}
+\par
+Deferrable load refers to the devices whose demand can be shifted along the
+time axis, e.g. an EV.
+Conventionally, an EV demand in a household (identified by suffix 1) can be modeled 
+by \eqref{p_ev1:interval}\eqref{meet_e_ev1}, in which $b^\mathrm{EV}_t$ ``=1''
+implies ``the EV is taking power from \textit{its} household at $t$'' and the corresponding
+charging power $p_t^\mathrm{EV}$ is subject to the physical constraint of
+the household's charger. $\mathrm{E}^\mathrm{EV}$ is the desired energy of 
+that EV in this planning period.
+We notice that if $\mathrm{E}^\mathrm{EV1}$ is small, the charger of
+household 1 may be idle for a long period, motivating us to consider
+the option of lending their charger to an EV owned by a neighbor's
+household (identified by suffix 2)\footnote{It is valid to consider multiple-to-one lending inside a block, as long as the blocks are still loosely coupled at the neighborhood. But this adds complexity to the block problem and is thus not our focus.}, particularly when
+$\mathrm{P}^\mathrm{EV2, MAX} < \mathrm{P}^\mathrm{EV1, MAX}$
+and $\mathrm{E}^\mathrm{EV2}$ is large.
+Therefore, the energy of EV2 may have dual supplies \eqref{meet_e_ev2}.
+We introduce $b_t^\mathrm{LENT}$ to indicate the lending logic:
+``=0'' means ``EV2 is occupying household 1's charger at $t$''.
+So the power lent is subject to \eqref{p_lent_interval}.
+The facts EV2 can take power from at most one charger and
+EV1 cannot take power within its own house during a lending event
+are embodied in \eqref{lent_logic}.
+\begin{equation}\label{p_ev1:interval}
+    \mathrm{P}^\mathrm{EV1, MIN} b^\mathrm{EV1}_t \le p_t^\mathrm{EV1} \le \mathrm{P}^\mathrm{EV1, MAX} b^\mathrm{EV1}_t
+\end{equation}
+\begin{equation}\label{meet_e_ev1}
+    \Delta t \sum_{t=1}^\mathrm{T} p_t^\mathrm{EV1} \ge \mathrm{E}^\mathrm{EV1}
+\end{equation}
+\begin{equation}\label{p_ev2:interval}
+    \mathrm{P}^\mathrm{EV2, MIN} b^\mathrm{EV2}_t \le p_t^\mathrm{EV2} \le \mathrm{P}^\mathrm{EV2, MAX} b^\mathrm{EV2}_t
+\end{equation}
+\begin{equation}\label{meet_e_ev2}
+    \Delta t \sum_{t=1}^\mathrm{T} (p_t^\mathrm{LENT} + p_t^\mathrm{EV2}) \ge \mathrm{E}^\mathrm{EV2}
+\end{equation}
+\begin{equation}\label{p_lent_interval}
+    (1-b_t^\mathrm{LENT}) \mathrm{P}^\mathrm{EV1, MIN} \le p_t^\mathrm{LENT} \le (1-b_t^\mathrm{LENT}) \mathrm{P}^\mathrm{EV1, MAX}
+\end{equation}
+\begin{equation}\label{lent_logic}
+    \max \{ b_t^\mathrm{EV1}, b_t^\mathrm{EV2} \} \le b_t^\mathrm{LENT}
+\end{equation}
+\par
+A pair of households involving social contact (here embodied in
+a lending relation) as mentioned above constitutes
+a (paired) \textit{block}.
+A single household can also constitute a (self) \textit{block} because
+a block is more of a computational concept than a physical entity.
+The counting of households and blocks in a neighborhood is illustrated by the following example:
+\begin{align*}
+    &\text{household}(h) \quad &1 \qquad &2\text{--}3 \quad  &4 \qquad &5 \quad &6\text{--}7 \\
+    &\text{block}(j) \quad &1 \qquad &2 \quad  &3 \qquad &4 \quad &5 \quad
+\end{align*}
+where we have 7 ($=\!\textrm{H}$) households grouped into 5 ($=\!\textrm{J}$) blocks.
+The block $j\!=\!1$ may merely be a conceptual wrapper of the household $h\!=\!1$.
+By contrast, the block $j\!=\!2$ comprises households 2--3 between which lending actions are allowed.
+Likewise, block 3 and 4 are self blocks whereas block 5 is another paired block.
+As such, we proceed with the constraints \textit{at the household level},
+where the household index is now uncovered as $h$.
+\par
+The cooling power $q_t$ in \eqref{o:state_eq} has an upper limit
+depending on their pipeline design:
+\begin{equation}\label{q:bus}
+    0 \le q_{h, t} \le \mathrm{Q}_h^\mathrm{BUS}
+\end{equation}
+The net power flow of a household lies in an interval depending on its
+circuit breaker:
+\begin{equation}\label{eqnetflowinterval}
+    -\mathrm{P}_h^\mathrm{BUS} \le p_{h, t}^\mathrm{BUS} \le \mathrm{P}_h^\mathrm{BUS}
+\end{equation}
+\begin{equation}\label{eq:ptbus}
+    p_{h, t}^\mathrm{BUS} := p^\mathrm{ES, C}_{h, t} - p^\mathrm{ES, D}_{h, t} - p_{h, t}^\mathrm{G}
+    + p_{h, t}^\mathrm{LENT} + p_{h, t}^\mathrm{EV} + p_{h, t}^\mathrm{U} + p_{h, t}^\mathrm{AC}
+    + \mathrm{D}_{h, t}
+\end{equation}
+Note that the definition of household-level power flow in \eqref{eq:ptbus}
+is an abstract form---while all households may own some uncontrollable
+load $\mathrm{D}_{h, t}$, some may lack certain terms, e.g. not having ES, 
+or not lending EV charger to a neighbor---in which case those terms vanish.
+\par
+Finally, \textit{from the coordinator's standpoint}, the \textit{power} supply of
+the neighborhood is limited:
+\begin{equation}\label{pAlimit}
+    0 \le p^\mathrm{A}_t := \sum_{h=1}^\mathrm{H} p_{h, t}^\mathrm{BUS} \le \mathrm{P}^\mathrm{A}
+\end{equation}
+\begin{equation}\label{qAlimit}
+    0 \le q^\mathrm{A}_t := \sum_{h=1}^\mathrm{H} q_{h, t} \le \mathrm{Q}^\mathrm{A}
+\end{equation}
+and this may also apply for the cooling \textit{energy}:
+\begin{equation}\label{eqlimit}
+    0 \le e^\mathrm{A} := \Delta t \sum_{t=1}^\mathrm{T}  q^\mathrm{A}_t \le \mathrm{E}^\mathrm{A}
+\end{equation}
+\par
+As an agent for the neighborhood, the coordinator's objective is to
+minimize the energy bills on behalf of the neighborhood\footnote{Additionally, any decisions from inside households might be priced with
+proper cost coefficients, e.g. it is valid to append a (linear) renewable curtailment cost term
+\( \sum_{t=1}^\mathrm{T} \sum_{h=1}^\mathrm{H} \mathrm{P}_t^\mathrm{CUR} \varpi_{h, t} \Delta t \).},
+where $\mathrm{C}_t^{\boldsymbol{\cdot}}$ denotes the energy price
+issued by the electricity and cooling energy sellers, respectively.
+\begin{equation}\label{eq:cost}
+    \text{Cost} := \sum_{t=1}^\mathrm{T}  \mathrm{C}_t^\mathrm{P} p^\mathrm{A}_t \Delta t + \mathrm{C}_t^\mathrm{Q} q^\mathrm{A}_t \Delta t
+\end{equation}
+
+\section{Block Decomposition, Master Problem, Valid Bounds for $z^\mathrm{IP}$ and $z^\mathrm{L}$}\label{section:three}
+The model built in Section~\ref{section:two} is identified as an
+MILP with loosely coupled blocks \cite{chenrui2024}.
+Its matrix-abstracted model (centralized formulation) can be cast as
+\begin{align}
+   z^\mathrm{IP} := \min_\mathbf{x} & \sum_{j=1}^\mathrm{J} \mathbf{d}_j^\top \mathbf{x}_j \label{IP:begin} \\
+    \text{s.t. }& \sum_{j=1}^\mathrm{J} \mathbf{A}_j \mathbf{x}_j \geqslant \mathbf{b} \quad  \label{IP:coupling} \\
+     & \mathbf{x}_j \in Q_j := P^\mathrm{Con}_j \cap \mathbb{I}_j \quad \forall j \in 1\!:\!\mathrm{J} \label{IP:end}
+\end{align}
+, where $\mathbf{x} := (\mathbf{x}_1, \mathbf{x}_2, ..., \mathbf{x}_\mathrm{J})$ is the whole
+decision vector in which the $j$-th component $\mathbf{x}_j$ is the subvector \textit{within} block $j$.
+The constraint that some entries of $\mathbf{x}_j$ are \textit{integers} is signified by $\mathbb{I}_j$,
+while \textit{all other} (linear) constraints on $\mathbf{x}_j$ is signified by the polyhedron $P^\mathrm{Con}_j$.
+To simplify notation, $Q_j$---a mixed-integer linear set---is introduced.
+Given physical conditions, each $P^\mathrm{Con}_j$ is assumed to be \textit{compact},
+so is each $Q_j$.
+Meanwhile, constraint \eqref{IP:coupling} denotes the inter-block \textit{complicating} 
+constraint (corresponding to \eqref{pAlimit}--\eqref{eqlimit}).
+Since it pertains to the whole decision vector, we also denote \eqref{IP:coupling} by
+$\mathbf{x} \in P$ tersely.
+Since a constraint on $\mathbf{x}_j$ is also a constraint on $\mathbf{x}$,
+``$\mathbf{x}_j \in Q_j$'' can be denoted by ``$\mathbf{x} \in \bar{Q}_j$'', where $\bar{Q}_j$
+is another notation introduced for convenience.
+Now, on $\mathbf{x}$ alone, we have the equivalent formulation \eqref{onelinezip}.
+\begin{equation}\label{onelinezip}
+    z^\mathrm{IP} = \min \{ \mathbf{d}^\top \mathbf{x} \ | \ \mathbf{x} \in P \text{ and } \forall j : \mathbf{x} \in \bar{Q}_j \}
+\end{equation}
+\par
+The MILP above admits\footnote{This conclusion is fundamental, see e.g. \cite{ip2014}. We will also use it in \eqref{implicitlpj}.} an (implicit) LP formulation \eqref{globalmip2lp}.
+\begin{equation}\label{globalmip2lp}
+    z^\mathrm{IP} = \min \{\mathbf{d}^\top \mathbf{x}\ | \ \mathbf{x} \in \text{conv}(P \cap (\cap_{j=1}^\mathrm{J} \bar{Q}_j)) \}
+\end{equation}
+Due to the basic (and trivial) relation \eqref{convcapbasic} in convex analysis 
+\begin{equation}\label{convcapbasic}
+    \text{conv} (A \cap B) \subset \text{conv} (A) \cap \text{conv} (B)
+\end{equation}
+and the convexity of $P$, we have
+\begin{equation}
+    \mathbf{x} \text{ is feasible in } \eqref{globalmip2lp} \; \Rightarrow \; \mathbf{x} \in P \, \text{and} \, \mathbf{x} \in \text{conv}(\cap_{j=1}^\mathrm{J} \bar{Q}_j)
+\end{equation}
+. By definition, \(\cap_{j=1}^\mathrm{J} \bar{Q}_j = \times_{j=1}^\mathrm{J} Q_j \).
+Since $\mathrm{J}$ is a finite integer and $Q_j$ is compact $\forall j$, conclusion \eqref{convtimes} holds\footnote{This
+equation stems from definition but is nontrivial, which pertains to the distributive property of multiplication over addition. For a proof see \cite{forumproof}.}.
+\begin{equation}\label{convtimes}
+    \text{conv}(\times_{j=1}^\mathrm{J} Q_j) = \times_{j=1}^\mathrm{J} \text{conv}(Q_j)
+\end{equation}
+Here, we have derived a valid lower bound $z^\mathrm{L}$ to $z^\mathrm{IP}$.
+\begin{equation}\label{zipgezl}
+    z^\mathrm{IP} \ge z^\mathrm{L} := \min_{\mathbf{x} \in P} \{ \mathbf{d}^\top \mathbf{x} \ | \ \forall j: \mathbf{x}_j \in \text{conv}(Q_j) \}
+\end{equation}
+Note both cases ($>$,$=$) can happen on the $\ge$ in \eqref{zipgezl},
+by considering $\mathrm{b}$ = $\frac{1}{2}$ or $1$ respectively
+in this 2-block example:
+\begin{equation}
+    \min_{x_j \in \{0, 1\} \text{ for } j \in \{1,2\}} \{x_1 - x_2 \ |\ x_1 - x_2 \ge \mathrm{b}\}
+\end{equation}
+\par
+According to Minkowski-Weyl Representation, for each $j$, there is a set of \textit{basic} vertices
+$\{\mathbf{v}_j^1, \mathbf{v}_j^2, ..., \mathbf{v}_j^{\mathrm{I}_j}\}$ that satisfies\footnote{The ``$\subset$'' is again due to \eqref{convcapbasic}. By \textit{basic} we meant \textit{no redundancy}.}
+\begin{equation}\label{enumvertices}
+    \text{conv} \{\mathbf{v}_j^1, \mathbf{v}_j^2, ..., \mathbf{v}_j^{\mathrm{I}_j}\} = \text{conv}(Q_j) \subset P^\mathrm{Con}_j
+\end{equation}
+, where $\mathrm{I}_j$ is some positive integer depending on $j$.
+\par
+Now, $z^\mathrm{L}$ admits an LP formulation by vertex enumeration
+\begin{align}\label{explicitzl}
+    z^\mathrm{L} = \min_{c \geqslant 0, \mathbf{x}} & \sum_{j=1}^\mathrm{J} \mathbf{d}_j^\top \mathbf{x}_j  \\
+    \text{s.t. }& \sum_{j=1}^\mathrm{J} \mathbf{A}_j \mathbf{x}_j \geqslant \mathbf{b} \quad [\boldsymbol{\beta} \geqslant 0] \\
+     & \sum_{i=1}^{\mathrm{I}_j} c_j^i \mathbf{v}_j^i = \mathbf{x}_j  \quad [\boldsymbol{\pi}_j] \quad \forall j \\
+     & \sum_{i=1}^{\mathrm{I}_j} c_j^i = 1 \quad [\theta_j] \quad \forall j
+\end{align}
+, where $\boldsymbol{\beta}$, $\boldsymbol{\pi}$ and $\theta$ are decision
+variables in its \textit{dual program}
+\begin{align}
+    z^\mathrm{L} = \max_{\boldsymbol{\beta} \geqslant 0, \boldsymbol{\pi}, \theta} & \boldsymbol{\beta}^\top \mathbf{b} + \sum_{j=1}^\mathrm{J} \theta_j \label{dualobj} \\
+    \text{s.t. } & \boldsymbol{\pi}_j = \mathbf{A}_j^\top \boldsymbol{\beta} - \mathbf{d}_j \quad [\mathbf{x}_j] \quad \forall j \label{dualpiline} \\
+    & \theta_j \le -{\mathbf{v}_j^i}^\top \boldsymbol{\pi}_j \quad [c_j^i \ge 0] \quad \forall i \in 1\!:\!\mathrm{I}_j, \forall j \label{Ijjcuts}
+\end{align}
+, where the ``='' in \eqref{dualobj} is due to strong duality, and variables in
+$[\cdot]$ are illustrating correspondences.
+By eliminating $\boldsymbol{\pi}$ and $\theta$ we will also have\footnote{This transformation is basic. Also cf. \eqref{implicitlpj}.} the 2-layer reformulation \eqref{twolay}.
+\begin{equation}\label{twolay}
+    z^\mathrm{L} = \max_{\boldsymbol{\beta} \geqslant 0} \left\{ \boldsymbol{\beta}^\top\mathbf{b} + \sum_{j=1}^\mathrm{J} \inf_{\mathbf{x}_j \in Q_j} \mathbf{x}_j^\top (\mathbf{d}_j - \mathbf{A}_j^\top \boldsymbol{\beta}) \right\} 
+\end{equation}
+\par
+For practical problems, we can assume that\footnote{Assuming our having this prior
+knowledge is reasonable, in a concrete engineering application context.
+And approaches to acquire this prior knowledge are also problem-dependent.
+With this assumption, we can warm up the main algorithm, i.e. Algorithm~\ref{algo:main}.
+}
+for each $j$ we can select a set $\mathrm{K}_j \subsetneq 1\!:\!\mathrm{I}_j$
+(often just a singleton) such that condition \eqref{inibnd} is satisfied.
+\begin{equation}\label{inibnd}
+    P \ \cap \ \times_{j=1}^\mathrm{J} \text{conv}\{\mathbf{v}_j^i : i \in \mathrm{K}_j\} \ \neq \ \emptyset
+\end{equation}
+Denoting such a \textit{selection} (i.e. having $\mathrm{K}_j$ at block $j$ for $j \in 1\!:\!\mathrm{J}$) by ``$\mathrm{K}$'',
+we can build the primal-dual LP of our \textit{master problem}\footnote{We will mainly work with the dual master problem \eqref{mstdual} in this paper, which features a cut generation style and hides $\boldsymbol{\pi}$.}
+as a function of selection:
+\begin{align}
+    z^\mathrm{Mst}(\mathrm{K}) := \min_{c \geqslant 0, \mathbf{x} \in P} & \sum_{j=1}^\mathrm{J} \mathbf{d}_j^\top \mathbf{x}_j \label{mstprim} \\
+    \text{s.t. }& \sum_{i\in \mathrm{K}_j} c_j^i \mathbf{v}_j^i = \mathbf{x}_j   \quad \forall j \\
+     & \sum_{i\in \mathrm{K}_j} c_j^i = 1 \quad  \forall j \label{mstprimend} \\
+    = \max_{\boldsymbol{\beta} \geqslant 0, \theta} & \ \boldsymbol{\beta}^\top \mathbf{b} + \sum_{j=1}^\mathrm{J} \theta_j \label{mstdual} \\
+    \text{s.t. } & \theta_j \le {\mathbf{v}_j^i}^\top (\mathbf{d}_j - \mathbf{A}_j^\top\boldsymbol{\beta}) \; \forall i \in \mathrm{K}_j, \forall j \label{mstdual1}
+\end{align}
+, where the ``='' in \eqref{mstdual} is due to strong duality.
+Since $\mathrm{K}_j \subset 1\!:\!\mathrm{I}_j$ and \eqref{inibnd} is assumed,
+we have \eqref{mstubed}.
+\begin{equation}\label{mstubed}
+    z^\mathrm{L} \le z^\mathrm{Mst}(\mathrm{K}) < \infty
+\end{equation}
+\par
+For a \textit{given} selection $\hat{\mathrm{K}}$, assuming \textit{optimal} solution to \textit{its}
+master problem is ($\hat{\boldsymbol{\beta}}$, $\hat{\theta}$),
+we have
+\begin{theorem}(Recovering Capability) \label{recovercap}
+    \( z^\mathrm{Mst}(\hat{\mathrm{K}}) = z^\mathrm{L} \) holds \textit{if}
+    \( \hat{\theta}_j \le {\mathbf{v}_j^i}^\top (\mathbf{d}_j - \mathbf{A}_j^\top \hat{\boldsymbol{\beta}}) \) holds
+    for all $i \in 1\!:\!\mathrm{I}_j$ for all $j$.
+\end{theorem}
+Proof: According to the condition, the $(\hat{\cdot})$ solution is feasible to \eqref{dualpiline}\eqref{Ijjcuts}.
+By definition
+\( z^\mathrm{Mst}(\hat{\mathrm{K}}) = \hat{\boldsymbol{\beta}}^\top \mathbf{b} + \sum_j \hat{\theta}_j \),
+i.e. being a feasible value, thus $\le z^\mathrm{L}$.
+The $\ge$ direction was known. \boxend
+\par
+The \textit{if} in \theoremref{recovercap} cannot be extended to \textit{if and only if}:
+\begin{theorem}(Degenerate Violations)
+    \( z^\mathrm{Mst}(\hat{\mathrm{K}}) = z^\mathrm{L} \) \textit{can} hold even if
+    \( \hat{\theta}_j > {\mathbf{v}_j^i}^\top (\mathbf{d}_j - \mathbf{A}_j^\top \hat{\boldsymbol{\beta}}) \) for some  $i \in 1\!:\!\mathrm{I}_j$  for some $j$.
+\end{theorem}
+Proof: Consider this toy MILP instance (to \eqref{IP:begin}--\eqref{IP:end})
+with two blocks and only one complicating constraint:
+\begin{equation}
+    \min_{x_1 \in \{0, 1\}, x_2 \in \{0, 1\}} \{-x_1-x_2 \ | \ -x_1-x_2 \ge -1\}
+\end{equation}
+. Following the aforementioned process, we can construct a master problem (selecting 2 cuts out of 4) as follows
+\begin{align}
+    \max_{\beta \ge 0} & \ -\beta + \theta_1 + \theta_2 \\
+    \text{s.t. } & \pi_1 = \pi_2 = 1 - \beta \\
+    & \theta_1 \le -\pi_1 \\
+    & \theta_2 \le 0
+\end{align}
+, which already recovers $z^\mathrm{L}$(=\,$-1$).
+But the solution $(\hat{\theta}_2 = 0, \hat{\pi}_2 = 1)$ violates the
+cut $\theta_2 \le -\pi_2$. \boxend 
+\par
+Therefore, in order to let $z^\mathrm{Mst}(\hat{\mathrm{K}})$ reduce to $z^\mathrm{L}$, we do not pursue that overly strict condition in Theorem~\ref{recovercap}.
+In a standard cutting plane algorithm, after getting $\hat{\boldsymbol{\beta}}$ and $\hat{\theta}_j$, we immediately solve the inf-program in \eqref{twolay} (given $\hat{\boldsymbol{\beta}}$) to optimality, which is clearly equivalent to solving an implicit LP or a discrete minimization:
+\begin{equation}\label{implicitlpj}
+    \hat{\theta}_j^\textrm{Sol} := \min_{\mathbf{x}_j \in \text{conv}(Q_j)} \mathbf{x}_j^\top (\mathbf{d}_j - \mathbf{A}_j^\top \hat{\boldsymbol{\beta}}) =
+    \min_{i \in 1:\mathrm{I}_j} {\mathbf{v}_j^i}^\top (\mathbf{d}_j - \mathbf{A}_j^\top \hat{\boldsymbol{\beta}})
+\end{equation}
+. Indeed, by configuring our MILP solver properly (e.g. adopting the simplex algorithms),
+we can expect that the optimal solution returned by the
+solver \textit{is a vertex} (as listed in \eqref{enumvertices}),
+which we denote by $\mathbf{v}_j^k$, where $k$ is some index in
+$1\!:\!\mathrm{I}_j$.
+\par
+If it turns out $\hat{\theta}_j > \hat{\theta}_j^\textrm{Sol}$, then $\mathbf{v}_j^k$ is definitely a \textit{new} vertex to the current selection $\hat{\mathrm{K}}$ (otherwise contradicting the definition of $\hat{\boldsymbol{\beta}}$ and $\hat{\theta}$), we can thus absorb it into our selection, i.e., adding the cut
+\begin{equation}\label{eq:j_cut}
+    \theta_j \le {\mathbf{v}_j^k}^\top(\mathbf{d}_j - \mathbf{A}_j^\top \boldsymbol{\beta})
+\end{equation}
+to the master problem \eqref{mstdual1} (in which case we say we are adding a \textit{violating} cut,
+and the master problem is \textit{tightened}.).
+\par
+If it turns out $\hat{\theta}_j = \hat{\theta}_j^\textrm{Sol}$ for all $\mathrm{J}$ blocks, then clearly the current iterate $\hat{\boldsymbol{\beta}}$ has solved \eqref{twolay}---the exact value of $z^\mathrm{L}$ has been derived. (Indeed, regarding the max-program in \eqref{twolay}, the current $(\hat{\cdot})$ furnishes a valid primal bound, while the dual bound is \eqref{mstubed}, and the gap between them has been closed). Therefore we have derived Theorem~\ref{monotonicti} and \ref{finiteTermination}.
+\begin{theorem}(Monotonic Tightening)\label{monotonicti}
+    Suppose by adding a violating cut, the master problem is tightened from status $\hat{\mathrm{K}}$ to
+    status $\breve{\mathrm{K}}$. Then $z^\mathrm{L} \le z^\mathrm{Mst}(\breve{\mathrm{K}}) \le z^\mathrm{Mst}(\hat{\mathrm{K}})$.
+\end{theorem}
+\begin{theorem}(Finite Convergence)\label{finiteTermination}
+    The cutting plane algorithm as depicted above can produce different trial solution (i.e. $(\hat{\boldsymbol{\beta}}, \hat{\theta})$) for at most $\sum_{j=1}^\mathrm{J} \mathrm{I}_j$ times, before recovering $z^\mathrm{L}$.
+\end{theorem}
+\par
+Nonetheless, to make this method practically meaningful, we need to establish valid bounds:
+\begin{theorem}(Valid UB)\label{theorem:ub}
+    If we add constraints ``$\forall j:\mathbf{x}_j \in \mathbb{I}_j$''
+    to \eqref{mstprim}--\eqref{mstprimend}, \textit{the resulting problem}
+    becomes a restriction to \textit{the original MILP} \eqref{IP:begin}--\eqref{IP:end} in the
+    sense that any feasible solution to the former is feasible to the latter.
+    Particularly, if we denote the optimal objective value of the former
+    by $z^{\mathrm{Mst}, \mathbb{I}}(\hat{\mathrm{K}})$, then
+    \(z^\mathrm{IP} \le z^{\mathrm{Mst}, \mathbb{I}}(\hat{\mathrm{K}})\).
+\end{theorem}
+Proof. We only need to prove $\mathbf{x}_j \in P^\mathrm{Con}_j$,
+which holds by recalling the definition of $\hat{\mathrm{K}}_j$
+and noticing \eqref{enumvertices}. \boxend
+\par
+The following conclusion is trivial by noticing \eqref{twolay}.
+\begin{theorem}(Valid LB)\label{theorem:lb}
+    Let \( z^{\mathrm{L}, \mathrm{LB}}(\hat{\boldsymbol{\beta}}) := \hat{\boldsymbol{\beta}}^\top\mathbf{b} + \sum_{j=1}^\mathrm{J} \inf_{\mathbf{x}_j \in Q_j} \mathbf{x}_j^\top (\mathbf{d}_j - \mathbf{A}_j^\top \hat{\boldsymbol{\beta}}) \).
+    Then \( z^{\mathrm{L}, \mathrm{LB}}(\hat{\boldsymbol{\beta}}) \le z^\mathrm{L} \) holds\footnote{It is worth noting that the size of each block is typically small so the $\mathrm{J}$ inf-problems
+    concerned here can often be solved to optimality so the value
+    $z^{\mathrm{L}, \mathrm{LB}}(\hat{\boldsymbol{\beta}})$ can be derived exactly.
+    Nonetheless, in numeric computation cases where the inf-problems can only be solved suboptimally,
+    we may retrieve the best dual bound from our MILP solver as a valid substitute.}. 
+\end{theorem}
+\par
+By studying the master problem under a given selection $\hat{\mathrm{K}}$, we have derived
+\begin{equation}\label{zipbounds}
+    -\infty < z^{\mathrm{L}, \mathrm{LB}}(\hat{\boldsymbol{\beta}}) \le z^\mathrm{L} \le z^\mathrm{IP} \le z^{\mathrm{Mst}, \mathbb{I}}(\hat{\mathrm{K}}) < \infty
+\end{equation}
+, where the leftmost $<$ is due to the compactness of $Q_j$s, other relations
+are existing knowledge.
+Note that here we are interested in the 1st and the 3rd ``$\le$''\footnote{The 2nd---the gap between $z^\mathrm{L}$ and $z^\mathrm{IP}$ depends on
+the problem structure and in this paper we have no plan to work towards
+any dual bound stronger than $z^\mathrm{L}$
+(aka the \textit{Lagrangian} bound of MILPs).}.
+\par
+For clarity, the $z^\mathrm{L}$ has its own valid upper bound:
+\begin{equation}\label{zlbounds}
+    -\infty < z^{\mathrm{L}, \mathrm{LB}}(\hat{\boldsymbol{\beta}}) \le z^\mathrm{L} \le z^\mathrm{Mst}(\hat{\mathrm{K}}) < \infty
+\end{equation}
+
+\section{An asynchronous cutting plane algorithm}\label{section:four}
+The cut generation to the dual master \eqref{mstdual}\eqref{mstdual1} in Section~\ref{section:three}
+\textit{by its nature} is to be implemented in a distributed
+manner, wherein multiple computing resources are at different geographical locations.
+In researches, however, the hardware condition can be hard
+to fulfill when $\mathrm{J}$ is large.
+So it makes sense to \textit{simulate} the above distributed optimization
+on a single computer but with multiple logical processors.
+Regarding existing studies, they either implement their algorithms
+in a single-thread sequential-programming way (e.g. \cite{fast2016}\!\!\cite{orlm2016}\!\!\cite{dw2019}\!\!\cite{liu2024}), or leverage
+parallel computing within a synchronized local scope (e.g. \cite{benders}).
+Since in practice the computations are conducted separately while communications
+exist between the coordinator and each individual block, the existing simulations
+cannot accurately reflect the real-world interaction between the coordinator and
+household blocks.
+The interplay of \textit{solving block subproblems} (add cut) and \textit{solving the master} (update $\hat{\boldsymbol{\beta}}$) in reality
+is conducted in an asynchronously concurrent manner, which is poorly reflected by
+synchronized arrangements where these two actions happen alternately
+and need to wait for each other.
+Some studies even carried out complex stabilization techniques (e.g. \cite{fast2016}).
+\begin{algorithm}
+    \caption{Block-$j$-Subproblem's Procedure} \label{algo:block}
+    \begin{algorithmic}[1]
+    \Require \texttt{S} \Comment{master LP's real-time solution status}
+    \State $\hat{\boldsymbol{\beta}} \gets$ \texttt{S} \Comment{create a static local snapshot} \label{line:snapbeta}
+    \State reset subproblem $j$'s objective \eqref{implicitlpj} according to $\hat{\boldsymbol{\beta}}$
+    \State solve subproblem $j$ to optimality \Comment{an MILP} \label{linemilp}
+    \State retrieve the optimal solution as $\mathbf{v}_j$ \label{line:solgene} \Comment{vertex generation}
+    \State add a cut according to \eqref{eq:j_cut} \Comment{cut generation}
+    \State \textbf{Quit}
+    \end{algorithmic}
+\end{algorithm}
+\begin{algorithm}
+\caption{Coordinator master problem's Procedure} \label{algo:mst}
+\begin{algorithmic}[1]
+\Require Master \eqref{mstdual}\eqref{mstdual1} with an initial selection \eqref{inibnd}
+\State solve the master LP at its current status to optimality
+\State update the LP's dual bound $Obn^\textrm{dual}$ \label{line:dualLPbound}
+\State update master LP's public status \texttt{S} according to the solution $\hat{\boldsymbol{\beta}}$ and $\{\hat{\theta}_j: \forall j\}$ here derived \label{line:updateS}
+\State \textbf{Quit}
+\end{algorithmic}
+\end{algorithm}
+\begin{algorithm}
+    \caption{The Main Procedure}\label{algo:main}
+    \begin{algorithmic}[1]
+    \Require $\mathbb{T}^\mathrm{B}, t^\text{lim}$ \Comment{Threads for blocks, training time limit}
+    \Ensure A master model \eqref{mstdual}\eqref{mstdual1} with cuts added
+    \State \texttt{msttask} $\gets$ spawn a task that do Algorithm \ref{algo:mst} \label{line:callmst1}
+    \State \texttt{tasks} $\gets$ [spawn(Algorithm \ref{algo:block}, $j$) \textbf{for} $j$ = 1:J] \label{line:callblock1}
+    \State \texttt{Ncuts0} $\gets$ a snapshot of number of existing cuts
+    \State $j \gets 1$ \Comment{the current index of block being considered} \label{line:j1}
+    \While{time\_elapsed() $< t^\text{lim}$} \label{line:telapsed}
+        \If{istaskdone(\texttt{msttask})}
+            \State \texttt{Ncuts} $\gets$ a snapshot of number of existing cuts \label{line:monitorcut}
+            \If{\texttt{Ncuts0} $<$ \texttt{Ncuts}} \label{line:hasnewcuts}
+                \If{ntasksaway(\texttt{tasks}) $< \mathbb{T}^\mathrm{B}$}
+                    \State \texttt{msttask} $\gets$ spawn(Algorithm \ref{algo:mst}) \label{line:callmst}
+                    \State \texttt{Ncuts0} $\gets$ \texttt{Ncuts} \label{line:resetncuts0}
+                \EndIf
+            \EndIf
+        \EndIf
+        \While{ntasksaway(\texttt{tasks}) $< \mathbb{T}^\mathrm{B}$}
+            \If{istaskdone(\texttt{tasks}[$j$])}
+                \State \texttt{tasks}[$j$] $\gets$ spawn(Algorithm \ref{algo:block}, $j$) \label{line:callblock}
+            \EndIf
+            \State $j \gets 1$ if $j$ attains J; otherwise $j \gets j+1$ \label{line:jnext}
+        \EndWhile
+    \EndWhile 
+    \State \textbf{Quit}
+    \end{algorithmic}
+\end{algorithm}
+\par
+Concerning these research gaps, we introduce a single-computer
+multithreading asynchronous implementation of the block decomposition algorithm
+that aims to truly reflect the asynchronous concurrent interaction in practice.
+Another advantage is that this algorithm can significantly reduce the time required
+for simulations, thereby enhancing researchers' overall efficiency in conducting experiments.
+The main procedure is framed in Algorithm \ref{algo:main}, which depends on the
+subprocedures defined in Algorithm \ref{algo:block}--\ref{algo:mst}.
+Our method is natural and simple in design, but performant
+in terms of scalability and numerical stability.
+Moreover, it can be readily integrated into real-world distributed management system applications.
+\par
+It should be noted that this section is dedicated to present the algorithm used to train the master problem \eqref{mstdual}.
+After finishing Algorithm~\ref{algo:main}, we still need to calculate bounds in \eqref{zipbounds}\eqref{zlbounds} to help us locate $z^\mathrm{L}$ and eventually $z^\mathrm{IP}$. Since that part is relatively trivial, it is not discussed in this section.
+\par
+Algorithm \ref{algo:block} is supposed to be executed at the local computing device
+within block $j$.
+It is called every time a task for block $j$ is spawned
+(Line \ref{line:callblock1}, \ref{line:callblock} in Algorithm \ref{algo:main}).
+Since we run concurrent programs in reality, the state of some variables may be volatile.
+Whenever we need to refer to a volatile variable, a local static \textit{snapshot} should be taken.
+\par
+Algorithm \ref{algo:mst} is supposed to be executed at the computing device owned by the coordinator.
+It is called every time a task for solving the master problem is spawned
+(Line \ref{line:callmst1}, \ref{line:callmst} in Algorithm \ref{algo:main}).
+On the other hand, the decrease of the dual bound is a sign of normality of our training, as in Line \ref{line:dualLPbound}.
+After the update in Line \ref{line:updateS}, all $\mathrm{J}$ blocks can henceforth perceive it for subsequent usages.
+\par
+The main procedure is arranged in Algorithm \ref{algo:main}, which prescribes the logics
+pertaining to when and where tasks should be executed.
+It is performed on a computer with multiple logical processors in our simulations, but it also
+serves as a counterpart to the top-level protocol when the distributed optimization is carried out
+in real world.
+The parameter $\mathbb{T}^\mathrm{B}$ is the number of threads
+dedicated to the computation of blocks. As mentioned above, the number of blocks $\mathrm{J}$
+in simulations can exceed the maximum number of threads of our hardware, in which case
+we allocate a fixed number of $\mathbb{T}^\mathrm{B}$ threads as a shared computing resource.
+And the extent to which the master's LP can be trained is controlled by a time limit $t^\text{lim}$,
+as in Line \ref{line:telapsed}.
+The main work that Algorithm~\ref{algo:main} does is spawning tasks repeatedly, as shown in Line
+\ref{line:callmst1}, \ref{line:callblock1}, \ref{line:callmst}, \ref{line:callblock}.
+To schedule them judiciously, we need the function ``istaskdone'', which returns a Bool value indicating
+if a task had been done, and the function ``ntasksaway'', which returns an integer indicating the number of
+tasks that are to be, or still being executed.
+Moreover, the master's LP is necessary to be re-optimized only if some new cuts have been added, as in Line \ref{line:hasnewcuts}, \ref{line:resetncuts0}.
+The dynamics of block index $j$ (Line \ref{line:j1}, \ref{line:jnext}) make sure that each block has
+an opportunity to be re-spawned so their respective cuts can be added again.
+\par
+By observing \eqref{mstprim}--\eqref{mstdual1} we know that cut generation at the dual side---in the meantime---is column generation at the primal side \cite{dw2019}. The columns are to be used in Theorem~\ref{theorem:ub}, thereby should be collected (as by-product) at Line~\ref{line:solgene} in Algorithm~\ref{algo:block}. Some other implementation details, e.g. adding locks to avoid race condition in asynchronous programming, are non-algorithmic, thus are not further discussed.
+
+\section{Computational Experiments}\label{section:five}
+Numerical simulations are conducted in this section with these main objectives:
+(i) A simulation assuring a 1-to-1 correspondence between household blocks and computing resources
+is performed to reflect the real-world coordination with high fidelity.
+(ii) Investigating the performance of our algorithm against other synchronous and asynchronous alternatives.
+(iii) The effectiveness and efficiency of the proposed block decomposition algorithm in 
+solving diverse problem formulations are confirmed, particularly in large-scale tests.
+(iv) Contributions of the EV charger lending and direct cooling supply are analyzed.
+For ease of exposition, which is also necessary for numerical computation (e.g. solving MILPs),
+power quantities and price signals are expressed in relative values rather than in absolute SI units.
+Units of time and temperature are kept usual as their magnitudes are already (and always) in reasonable numeric ranges.
+For reproducibility, our code is made publicly accessible at \cite{github2025},
+which includes test case generation and algorithm details.
+\subsection{General Settings on Test Cases}
+All our experiments are carried out on a x86\_64 linux server equipped with
+2 AMD EPYC 7763 64-Core Processors and 256GB memory.
+The number of logical processors is 256.
+Our MILP solver is Gurobi 12.0.3 called from Julia 1.12.1\cite{jump}.
+The asynchronous algorithm in Section~\ref{section:four} is implemented
+via the asynchronous programming APIs shipped with Julia.
+Particularly, the ``spawn'' function in Algorithm \ref{algo:main}
+corresponds to \texttt{Threads.@spawn} in Julia, which creates a task and schedules it right away.
+Since one thread is reserved by default by Julia for UI purposes, one thread is reserved for running
+the main loop in Algorithm \ref{algo:main} and one thread is required to run Algorithm \ref{algo:mst},
+the realization of the number $\mathbb{T}^\mathrm{B}$ in Algorithm \ref{algo:main} in our simulation\footnote{Note that $\mathbb{T}^\mathrm{B}$ is not tied to hardware. It can be a smaller number, e.g. if we start julia with fewer threads.} is 253.
+\par
+We suppose that the neighborhood energy coordination happens during a hot summer, so the
+sense of the thermal demand is cooling.
+The outdoor temperature dynamic is modeled by 5 representative scenarios:
+flat midday, strong evening peak; morning+evening peaks and midday dip;
+midday solar effect; steady climb during day, single high plateau evening;
+low off-peak overnight, gentle evening.
+For any test case, we may randomly draw one out of the above scenarios.
+The cooling demand can be supplied both directly via district cooling, or from 
+an (electric) AC\footnote{Note that an AC can also be useful in winter, so it is not a redundant device in real world.}.
+We suppose $\mathrm{COP}$ is drawn from the range $[2, 4]$ (for convenience, denoted
+$\mathrm{COP} \sim [2, 4]$).
+The thermal inertia of a house is supposed to $\mathrm{INR} \sim [6, 20]$.
+The thermal conductance that influences the in/outdoor heat exchange is supposed to
+$\mathrm{CND} \sim [0.5, 3.5]$.
+Heat emitted from appliances (e.g. computer servers), produced by human activities (e.g. cooking),
+or transmitted from sunshine can be aggregated as the indoor heat gain $\mathrm{Q}^\mathrm{I}$,
+where we assume $\mathrm{Q}^\mathrm{I} \sim [3, 9]$.
+The hottest indoor temperature and the length of comfort interval differs by householders.
+We assume $\mathrm{O}^\text{MAX} \sim [24, 29]$, $\mathrm{O}^\Delta \sim [4, 9]$.
+Since a household may not have access to the district cooling (i.e. $q_t \equiv 0$ in \eqref{o:state_eq})
+due to reasons like no subscription or undergoing an overhaul,
+we use the following formula to lower-bound the parameter $\mathrm{P}^\text{AC}$ to avoid
+the infeasibility of the air-conditioning module.
+\begin{equation}
+    \mathrm{P}^\text{AC} \ge ((\max(\mathrm{O}) - \mathrm{O}^\text{MAX})\mathrm{CND} + \max(\mathrm{Q}^\mathrm{I})) / \mathrm{COP}
+\end{equation}
+\par
+For the uninterruptible load, residents are supposed to own dish washer,
+clothes washer/dryer, slow cooker and home theater.
+We assume $|\mathrm{U}| \sim [1, 4]$,
+The number of phases for each device $\mathrm{L}_i \sim [2, 5]$,
+power at each phase for each device $\mathrm{P}^\mathrm{U}_{i, l} \sim [1, 4]$.
+\par
+Every household is supposed to have some uncontrollable load: $\mathrm{D}_{h, t} \sim [0, 5]$.
+A small portion of the households are supposed to also have rooftop solar panels $\mathrm{G}_t \sim [0, 17]$.
+By ``small'' we mean that the residential neighborhood studied is supposed to \textit{consume} energy at any $t$.
+The renewable generation is supposed to alleviate the load level, but \textit{not to} reverse the direction of power
+supply at the neighborhood level.
+If a household is renewable-free, it is assumed not having ES either due to economic considerations.
+In this case, since this household is load-only, the lower bound of their net power flow can be set to $0$ (in \eqref{eqnetflowinterval}).
+By contrast, the excessive power generated from a renewable-equipped household can be exported
+(but within the neighborhood), resulting in a negative power flow at the household level.
+A battery energy storage system (ES) serves as an auxiliary device to the solar panels.
+We assume $\mathrm{E}^\mathrm{MAX} \sim [19, 55]$, $e_0 \sim [0, \mathrm{E}^\mathrm{MAX}]$,
+$\mathrm{E}^\mathrm{MIN}_t \equiv 0$ except
+$\mathrm{E}^\mathrm{MIN}_\mathrm{T} \sim [0, \min(21, \mathrm{E}^\mathrm{MAX})]$ preventing
+the end-of-horizon effect.
+We assume $\mathrm{P}^{\mathrm{C}, \text{MAX}}, \mathrm{P}^{\mathrm{D}, \text{MAX}} \sim [0, 6]$
+while their $\mathrm{P}^{\cdot, \text{MIN}}$ counterparts are set to $0$, which allows us to save half of the binary decisions
+for ES, as mentioned in Section~\ref{section:two}.
+$\eta^\mathrm{C}$ and $\eta^\mathrm{D}$ are both set to $0.95$.
+\par
+Every household is supposed to own an EV and accordingly an EV charger, where
+$\mathrm{P}^{\text{EV}, \text{MIN}} \sim [1, 1.5]$,
+$\mathrm{P}^{\text{EV}, \text{MAX}} \sim [3, 7]$,
+$\mathrm{E}^\text{EV} \sim [10, 39]$.
+As for the potential lending relations between certain pairs of household, we assume
+they are based on real social contacts, thus have been determined ahead-of-planning.
+We assume different pairs do not have overlap so the blocks are separate.
+Also, we assume that the household who can lend its EV charger is also a household which
+owns solar panels.
+\par
+As mentioned in Section~\ref{section:two}, a neighborhood comprises some paired blocks
+and other self blocks, where we denote the percentage of the former type by $\rho$.
+For instance, suppose a neighborhood has $\textrm{J} = 999$ blocks with $\rho = 25\%$,
+then we would have $249$ paired blocks and $750$ self blocks, resulting in an ownership of
+$\textrm{H} = 1248$ household entities.
+\par
+Since $\mathbb{T}^\mathrm{B}$ is 253 in our simulation, we introduce
+a multiplier $\mathrm{K}$ and only generate test cases with $\mathrm{J} := \mathrm{K}\mathbb{T}^\mathrm{B}$
+for $\mathrm{K} \in \mathbb{Z}_+$, which doesn't lose generality.
+Moreover, we also consider the possibility of modeling with a higher time resolution
+specific to the ES module given the volatility of solar power generation.
+To this end, we denote the configurable parameter by $\mathrm{F}$ (relative frequency):
+$\mathrm{F} = 1$ is just the default setting ($\Delta t = 1$ hour) whereas $\mathrm{F} = 4$
+indicates that the solar power generation and management of the ES module is conducted
+with $\Delta t = 15$ minutes, resulting in $96$ steps in 24 hours.
+Except for the aforementioned 3-tuple configuration $(\mathrm{K}, \mathrm{F}, \rho)$,
+in order to smooth out performance variations, we generate multiple test instances for
+each realization of $(\mathrm{K}, \mathrm{F}, \rho)$, controlled by an additional
+random seed that is sowed globally.
+
+\subsection{Algorithm Performance on a One-to-One simulation}\label{subsec:1to1}
+In the real-world decentralized setting, each block should have its own computing device.
+Considering $\mathbb{T}^\mathrm{B} = 253$, the biggest \textit{faithful} instance that we
+can create is a neighborhood with $\mathrm{J} = \mathbb{T}^\mathrm{B}$ blocks (i.e. $\mathrm{K} = 1$).
+We believe that the experiment under this one-to-one setting offers a depiction
+of the real-world performance with the highest fidelity.
+\par
+Since the specific physical problem being tested has no bearing on showcasing the
+decomposition algorithm itself (as the algorithm framework is abstract),
+we opt to investigate a ``min-rating'' problem at first.
+Regarding the ``min-cost'' formulation in Section~\ref{section:two}, we first turn off the direct cooling
+supply at all time, i.e. set $\mathrm{Q}^\mathrm{A} = 0$ in \eqref{qAlimit}.
+The second thing to modify is, instead of studying the economic objective \eqref{eq:cost},
+we revert to an equally relevant question in engineering---what is the minimum power rating
+of the transmission line supplying electricity to the neighborhood (i.e. minimize the scalar
+decision $\mathrm{P}^\mathrm{A}$, instead of regarding it as a known parameter)
+so that the problem would not be rendered infeasible\footnote{Actually, results of the min-rating problem can serve as a reference for deciding the input data to the min-cost problem, e.g. the $\mathbf{b}$ in \eqref{IP:coupling}.}.
+\begin{figure}[!t]
+    \centering
+    \includegraphics[width=\linewidth]{timergap2.pdf}
+    \caption{Training results of the proposed decentralized algorithm at $\mathrm{K} = 1$.
+    Each gray line stands for a test case. The end with a dot marker is the eventual result
+    after primal solution recovery, whereas the other end stands for the corresponding earlier result
+    where only dual optimization is performed.}
+    \label{timergap2}
+\end{figure}
+\par
+Regarding this min-rating problem, we generate 10 instances for each of the following combinations:
+(i) $\mathrm{F} = 1, \rho = 25\%$ (ii) $\mathrm{F} = 1, \rho = 75\%$
+(iii) $\mathrm{F} = 4, \rho = 25\%$ (iv) $\mathrm{F} = 4, \rho = 75\%$.
+For each instance, we run Algorithm \ref{algo:main} with $t^\text{lim} = t^\text{dual}$ seconds,
+where the $t^\text{dual}$ is decided dynamically as we are monitoring the progress via
+indicators like the LP dual bound (Line \ref{line:dualLPbound} Algorithm \ref{algo:mst})
+and the number of cuts (Line \ref{line:monitorcut} Algorithm \ref{algo:main}). 
+Upon finishing the decentralized dual optimization (i.e. Algorithm \ref{algo:main}),
+we evaluate its optimality gap $g^\text{dual}$, wherein the valid lower bound was in Theorem~\ref{theorem:lb}.
+We spend an additional $t^\text{prim}$ seconds running the restriction problem in Theorem~\ref{theorem:ub}, which in reality should
+be conducted on the coordinator's computer.
+The eventual optimality gap $g^\text{eve}$ for the overall optimization is thus derived from primal solution's upper
+bound in conjunction with the valid lower bound obtained in the aforementioned dual phase.
+The two points $(t^\text{dual}, g^\text{dual})$, $(t^\text{dual} + t^\text{prim}, g^\text{eve})$
+derived in \textit{an} instance are plotted in Fig.~\ref{timergap2} as the two ends of \textit{a} gray line.
+\par
+As a primary observation from Fig.~\ref{timergap2}, optimizations under the normal $\mathrm{F} = 1$ setting
+finish within 1 minute, while still finish within about 2 minutes under the harder $\mathrm{F} = 4$ setting.
+We also notice that the primal recovery time $t^\text{prim}$ is generally a bit longer under the $\mathrm{F} = 4$ setting.
+Yet all of the relative gaps are still under $\frac{1}{1000}$, which is fairly high accuracy in engineering optimization.
+\begin{figure}[!t]
+    \centering
+    \includegraphics[width=3in]{cenprofile.pdf}
+    \caption{Relative performance profile of the centralized optimization. Jumps at 4, 5 and 9
+    represent real ratios whereas jumps at 10 and 11 are defined in other ways. Tests are done under $\mathrm{K} = 1$.}
+    \label{cenprofile}
+\end{figure}
+\par
+Under the $\mathrm{F} = 4, \rho = 75\%$ setting, the number of households in the neighborhood is 443.
+Concerning more details as an optimization formulation, the model has 144361 continuous and 59568 integer decisions,
+149036 physical constraints and 720506 nonzeros.
+To showcase the strength of the proposed decentralized algorithm, we also report the results of
+the same 40 instances solved with the centralized formulation \eqref{IP:begin}--\eqref{IP:end} for comparison.
+(Here we allocate 4 threads for Gurobi, which is a proper setting.)
+Since we find that our algorithm yields better results in all test cases, 
+the performance profile of the centralized algorithm \textit{relative to} ours is plotted in Fig.~\ref{cenprofile}.
+Suppose in an instance our decentralized algorithm yields the baseline result $(t^\text{base} := t^\text{dual} + t^\text{prim}, g^\text{eve})$.
+We would let the centralized algorithm run for a time period no longer than $9t^\text{base}$.
+The worst outcome is that it even fails to find a primal feasible solution within that period, in which case we define
+the multiplier to be 11 (as classified in the abscissa).
+If it finds at least one primal feasible solution but the optimality gap upon termination is larger than $g^\text{eve}$,
+we define the multiplier to be 10. 
+(Since these two situations do not actually pertains to the \textit{number} ``10'' and ``11'', their dots are annotated in red.)
+If it manages to reach the baseline gap $g^\text{eve}$ spending longer than $8t^\text{base}$ but within $9t^\text{base}$,
+we define the multiplier to be 9 (same rule for $5, 4$).
+The curve in Fig.~\ref{cenprofile} is drawn in a cumulative fashion so the increment along the ordinate
+is the proportion of instances falling into the case indexed by a specific multiplier.
+A primary conclusion is that the centralized algorithm fails to attain the same optimality gap within
+3 times of the $t^\text{base}$ spent by our algorithm, in all cases tested.
+And in most cases, the centralized algorithm takes 9 times longer yet still finds an inferior solution.
+\begin{table*}[!t]
+\caption{Performance Comparison of Untrained, Synchronous, 2-Portion-Asynchronous, and Our Algorithm}
+\label{tab:comparison}
+\centering
+\begin{tabular}{c|c|c|c|c|c}
+\hline
+& $Obn^\textrm{dual}$ \; $g^\textrm{dual}$ \; $g^\textrm{eve}$ & $Obn^\textrm{dual}$ \; $g^\textrm{dual}$ \; $g^\textrm{eve}$ & $Obn^\textrm{dual}$ \; $g^\textrm{dual}$ \; $g^\textrm{eve}$ & $Obn^\textrm{dual}$ \; $g^\textrm{dual}$ \; $g^\textrm{eve}$ & $Obn^\textrm{dual}$ \; $g^\textrm{dual}$ \; $g^\textrm{eve}$\\
+\hline
+unt & 4.046  8.257e-1  4.523e-1 &  5.609  5.006e-1  3.336e-1  & 3.120  7.657e-1  4.337e-1  & 3.826  7.535e-1  4.297e-1 & 3.660  8.266e-1  4.525e-1 \\
+syn & 3.996  8.034e-1  4.455e-1 &  5.572  4.908e-1  3.292e-1  & 2.814  9.392e-2  8.596e-2  & 3.723  5.298e-1  3.463e-1 & 3.602  7.977e-1  4.438e-1 \\
+asy & 3.719  1.146e-1  1.029e-1 &  5.243  5.488e-2  5.215e-2  & 2.802  7.572e-2  7.057e-2  & 3.648  2.324e-1  1.886e-1 & 3.566  5.083e-1  3.371e-1 \\
+our & 3.525  7.958e-9  2.318e-5 &  5.107  0.000e-0  3.493e-6  & 2.722  0.000e-0  6.959e-5  & 3.358  2.466e-9  1.493e-5 & 3.179  1.456e-4  2.061e-4 \\
+\hline
+unt & 2.169  1.015e-1  9.214e-2 & 2.171  5.450e-2  5.168e-2 & 1.830  1.394e-1  1.224e-1 & 1.910  8.984e-2  8.243e-2 & 1.420  7.318e-2  6.819e-2 \\
+syn & 2.149  6.227e-2  5.901e-2 & 2.166  5.221e-2  5.041e-2 & 1.746  1.979e-2  1.957e-2 & 1.901  7.918e-2  7.403e-2 & 1.416  6.988e-2  6.595e-2 \\
+asy & 2.134  2.413e-2  2.385e-2 & 2.163  1.691e-2  1.678e-2 & 1.739  5.339e-3  5.390e-3 & 1.888  1.452e-2  1.458e-2 & 1.414  1.617e-2  1.624e-2 \\
+our & 2.105  0.000e-0  1.524e-6 & 2.155  8.928e-8  1.611e-5 & 1.710  0.000e-0  4.538e-5 & 1.872  8.399e-7  5.834e-5 & 1.409  1.651e-5  7.698e-3 \\ \hline
+\end{tabular}
+\end{table*}
+\begin{table}[!t]
+\caption{Algorithm performance under severe information loss}
+\label{tab:infoloss}
+\centering
+\begin{tabular}{c|c|c|c|c|c}
+\hline
+$Pr^\textrm{success}$ & $Obv^\textrm{dual}$ & $Obn^\textrm{dual}$ & $Obv^\textrm{MIP}$ & $g^\textrm{dual}$ & $g^\textrm{eve}$ \\ \hline
+0\%  & 1.962e3 & 3.884e3 & 3.884e3 & 9.791e-1 & 4.947e-1\\
+1\%  & 2.956e3 & 3.789e3 & 3.791e3 & 2.818e-1 & 2.202e-1\\
+10\% & 3.389e3 & 3.394e3 & 3.395e3 & 1.351e-3 & 1.583e-3\\
+25\% & 3.390e3 & 3.392e3 & 3.392e3 & 7.575e-4 & 4.078e-4 \\
+\hline
+\end{tabular}
+\end{table}
+\begin{figure}[!t]
+    \centering
+    \includegraphics[width=3in]{duty.pdf}
+    \caption{Computation-active periods of the coordinator (top) and two representative blocks (the middle being a paired-block exemplar and the bottom being a self-block exemplar). The horizontal axis is shared wallclock time. Each blue square pulse marks the occurrence of a re-optimization event (the most computationally demanding part). Other white spaces indicate idleness.}
+    \label{dutywaves}
+\end{figure}
+\par
+Under the $\mathrm{F}=1$, $\rho=75\%$ setting, we further compared the performance of our Algorithm~\ref{algo:main} against a \textit{synchronous parallel} and a \textit{2-portion-asynchronous parallel} variant. All these 3 algorithms starts from the same \textit{untrained} state (counted as a null algorithm by itself) and would expend the same amount of $t^\textrm{dual}$ (=10s) before termination. Here, ``untrained'' means barely the singleton warm-up mentioned in \eqref{inibnd}, ``synchronous'' means that the coordination signal $\hat{\boldsymbol{\beta}}$ is updated only if feedback information is received from \textit{all} blocks, while ``asynchronous'' means that the coordination signal $\hat{\boldsymbol{\beta}}$ is updated if \textit{a certain portion} of the blocks have fed back their reactions\footnote{To make it fair, the blocks are divided into 2 portions, based on whether being a paired block, or self block (so that solution time of subproblems within one portion should be similar and hence parallel efficiency is retained).}.
+The results are displayed in TABLE~\ref{tab:comparison}, in which we tested 5 min-rating random instances (upper half) and the other 5 min-cost random instances (lower half).
+For each instance, the performance indices (in 3 subcolumns) are the objective bound of the dual master problem $Obn^\textrm{dual}$, $g^\textrm{dual}$ and $g^\textrm{eve}$ respectively. For the figures under the $Obn^\textrm{dual}$ column, a common divisor ($10^3$ for min-rating, $10^6$ for min-cost) had been applied (which does not affect comparison).
+In terms of the termination dual bound $Obn^\textrm{dual}$, it is clear that our method improves $Obn^\textrm{dual}$ to the greatest extent (with the untrained results being the reference), and thus leads to better $g^\textrm{dual}$ compared to the alternatives.
+It is also not surprising that the 2-portion-asynchronous generally performs better than its synchronous counterpart since the self-block calculations are faster than the paired blocks and they do not need to wait for them.
+\par
+The three subplots in Figure~\ref{dutywaves} provide more details pertaining to that 10 seconds of training performed by our algorithm, where the upper subplot shows the actions of the coordinator. Since there are many paired or self-blocks, a randomly picked one is representing each type, respectively.
+It is clear that the waves from the paired-block tend to be wider than the self-blocks, due to larger-scale MILP subproblems.
+By comparing the waves from all three subplots, we notice that their respective computations can be conducted concurrently.
+Particularly, the coordinator does not need to wait for any single customer to finish its MILP reoptimization, thus leads to better overall parallel efficiency.
+Since a specific block is only responsible for contributing its own cuts while the coordinator needs to retrieve cuts from all $\mathrm{J}$ blocks,
+a block might finish its mission (i.e. no more violating cuts can be generated) earlier while the coordinator remains active until the end of the training.
+\par
+Under the same $\mathrm{F}=1$, $\rho=75\%$, $t^\textrm{dual}=10$s setting, we also tested our algorithm under severe imperfect communication conditions, with a min-rating random test case. Since our algorithm is cut-generation based, here we assume a success probability $Pr^\textrm{success}$ that any block can deliver their cuts to the coordinator\footnote{That is to say, all the other experiments were conducted assuming the normal condition $Pr^\textrm{success}$ = 100\%.}. Also note that this success probability applies to \textit{each} block, stochastic independently. The results are displayed in TABLE~\ref{tab:infoloss}, wherein $Obv^\textrm{dual}$ is the lower bound to the dual master problem), while $Obv^\textrm{MIP}$ is the primal-side objective value (i.e. the eventual valid upper bound to the original MILP). It is perhaps surprising that the gap of the dual optimization can be closed somehow even if the probability of successful cut feedback is very low. But by reviewing Figure~\ref{dutywaves} it is not hard to find that actually there are many chances during the training for each block to feed its cut back. The steady progress of the dual bound is a direct consequence of the cutting plane algorithm (Theorem~\ref{monotonicti}).
+
+\subsection{Efficiency in Solving Large Scale Instances}
+Now we relax the one-to-one restriction imposed in Section~\ref{subsec:1to1}
+to corroborate the efficiency of our block decomposition algorithm in large-scale
+simulations where we do not have correspondingly many computing resources.
+To this end, we fix $\mathrm{K} = 64$ in this subsection.
+Regarding the min-rating problem proposed in Section~\ref{subsec:1to1}, we generate 10
+instances under $\mathrm{F} = 1, \rho = 75\%$ and 10 instances under  $\mathrm{F} = 4, \rho = 25\%$.
+The performance of the algorithm is described in terms of the resulting optimality gaps after a certain
+time period's execution of Algorithm \ref{algo:main}.
+As displayed in Fig.~\ref{figure:varytime}, that certain period (i.e. $t^\text{dual}$) takes 300s, 900s and
+2700s respectively.
+On the other hand, the realization of $t^\text{prim}$ depends on the specific instance, so the result
+$t^\text{dual} + t^\text{prim}$ is also drawn in the figure with its ordinate being time.
+Since results are random across test instances with the same hyperparameter, we drew \textit{standard}
+(i.e. directly via \cite{makie}) \textit{boxplot} for
+each entry of outcome if it exists.
+After these tests are done, we gained some ballpark figures about the input parameter $\mathrm{P}^\mathrm{A}$
+in \eqref{pAlimit}.
+Therefore, we proceeded to build up their corresponding min-cost problems that we originally presented
+in Section~\ref{section:two}, on which the same test procedures were conducted, with the results being 
+displayed in Fig.~\ref{figure:varytime2}.
+The largest instance tested, if were formulated as a centralized program, would have 4468992 continuous
+and 2182944 integer decisions, 4345525 constraints and 21292832 nonzeros, representing a neighborhood with
+28336 households.
+\begin{figure}[!t]
+    \centering
+    \includegraphics[width=3.3in]{varytime.pdf}
+    \caption{Performance of the proposed decentralized block decomposition algorithm on large-scale minimum power rating problems.
+    Boxplots in blue pertain to only the dual optimization phase, whereas the entire work---including the primal
+    recovery phase---are illustrated in green. Labels of x-y axes are shared.}
+    \label{figure:varytime}
+\end{figure}
+\begin{figure}[!t]
+    \centering
+    \includegraphics[width=3.3in]{varytime2.pdf}
+    \caption{Performance of the proposed decentralized block decomposition algorithm on large-scale minimum energy cost problems.
+    Style rules are kept the same as Fig.~\ref{figure:varytime}.}
+    \label{figure:varytime2}
+\end{figure}
+\par
+Observing the $\mathrm{F} = 1, \rho = 75\%$ case in Fig.~\ref{figure:varytime}, the optimality gap
+is generally reduced from 70\% to $<1\%$ within 330s. Since 980s' time suffices to let the gap fall
+below $\frac{2}{10000}$, we omit spending an additional 1800s to fill the ``2700s'' columns.
+Note that $\rho = 75\%$ is a complex modeling option, so the efficiency of our algorithm
+in dealing with large scale cases under $\mathrm{F} = 1$ is verified.
+On the other hand, the case generated with $\mathrm{F} = 4$ is much harder so the resulting gap
+is typically still $>0.2\%$ after around 2825 seconds.
+The purpose of creating this $\mathrm{F} = 4$ test case is to note that the hardness of our
+decomposition algorithm is affected by the average hardness of the block subproblem-MILPs---if the MILP
+subproblem themselves generally do not admit high-precision solutions, the result given by
+our decomposition algorithm can neither.
+On one hand, practitioners should avoid modeling hard subproblems in a decomposition algorithm.
+On the other hand, the $\mathrm{F} = 1$ setting is appropriate for day-ahead scheduling, whereas
+the $\mathrm{F} = 4$ setting might be useful in a receding horizon approach \cite{kim2013} where
+finding a global optimal solution is not the primary concern.
+\par
+For the min-cost tests in Fig.~\ref{figure:varytime2}, we had added a warm-up phase\footnote{In our experiment, the \textit{initial} feasible solutions were collected during solving the min-rating problems.} before the dual optimization to satisfy the assumption \eqref{inibnd}, which amounts to assuming that the coordinator is aware of a feasible (suboptimal) scheme before executing
+the main decentralized Algorithm \ref{algo:main}, which is reasonable in real-world circumstances.
+Moreover, this warm-up furnishes a finite initial upper bound for the master (as required in Algorithm \ref{algo:mst}).
+As a result, the initial (0s) optimality gap is not very large---around $4\%$.
+We observe that our algorithm is highly effective in solving the min-cost problems---the gap managed to reach $<\frac{1}{10000}$ within 310 seconds for all instances.
+\begin{figure}[!t]
+    \centering
+    \includegraphics[width=3in]{Kver.pdf}
+    \caption{The mean (yellow) and maximum (red) number of cuts added by a single block, under different
+    dual optimization training time, reported in standard boxplot to aggregate results across random instances.
+    Results are from minimum power rating problems (cf. Fig.~\ref{figure:varytime})}
+    \label{figure:Kver}
+\end{figure}
+\par
+For completeness, we further report the required number of cuts towards the optimality attained by the algorithm.
+This performance index, unlike computing time, does not rely on the computer hardware nor on the
+performance of the optimizer software (=Gurobi here).
+Instead, it only relates to the physical problem (here the coordination of smart homes) and
+the design of our cutting plane algorithm (Section~\ref{section:four}).
+For conciseness we only report the results from the min-rating problem via Figure \ref{figure:Kver} (which relates
+to Figure \ref{figure:varytime}). The outcomes of the min-cost problem are similar thus omitted.
+From the results we can conclude that our asynchronous cutting plane strategy is highly efficient in that
+each block on average only contributed about 5 cuts (or vertices, equivalently, standing for
+local operation styles).
+And none of the blocks are adding $>9$ cuts during the whole training period across all instances,
+so the master LP's size is kept manageable throughout.
+
+\subsection{Results of the Optimal Coordination}
+In this subsection we look into the optimized decisions in the original model proposed in Section~\ref{section:two}.
+To this end, we consider a medium-scaled neighborhood with $\mathrm{K} = 3, \mathrm{F} = 1, \rho = 75\%$.
+\par
+Unlike other devices that belong to the physical layer, the incorporation of EV charger lending is \textit{solely}
+based on social activities.
+To better showcase its impact on the demand response program, we disabled all the ES modules in the
+neighborhood, which is reasonable as battery systems themselves are high in capital cost.
+The results with and without lending (with all other factors kept identical) are displayed in Fig.~\ref{noevlent}.
+We notice that the lending actions take effect at around hour 7 and 18, during which the price
+reaches its peaks.
+The total electric energy consumed is nearly the same, but \textit{with} the lending option, power drawn
+at a certain time step is able to be shifted to nearby time steps where the electricity price is lower.
+As such, the flexibility exploitation of the neighborhood demand side is enhanced without requiring any additional
+hardware investments.
+\begin{figure}[!t]
+    \centering
+    \includegraphics[width=\linewidth]{noEVlent.pdf}
+    \caption{Aggregated electric power profile (excluding self blocks) under the base (i.e. proposed) case (green), and under
+    another setting that disallows any social activity (red). Price information is also attached as a reference.}
+    \label{noevlent}
+\end{figure}
+\begin{figure}[!t]
+    \centering
+    \includegraphics[width=\linewidth]{noCooling.pdf}
+    \caption{Aggregated electric and cooling power profiles under the base (i.e. proposed) case.
+    Also with an aggregated electric power profile (q=0:p) derived by turning off cooling supply
+    in the neighborhood district, as a comparison. Environmental factors are also attached.}
+    \label{nocooling}
+\end{figure}
+\par
+Finally, the role of district cooling in our multi-energy management is illustrated via Fig.~\ref{nocooling},
+where we assume the direct cooling supply is attributed to an \textit{ice energy storage system} of the neighborhood.
+As such, the cooling energy that can be sent during the day is restricted by the amount of ice stored \eqref{eqlimit}.
+Since this ice storage facility is not governed by our energy management models, we simply assume the cost of
+its cooling supply to be zero.
+In the base case where the direct cooling is on, we observe that the green and the blue curves are both
+bounded above: the electric power reaches its maximum during low-price intervals, whereas the cooling
+power peak coincides with the summit of electricity price.
+Moreover, the area under the curve ``base:q'' is also limited,
+so the linking constraints \eqref{pAlimit}--\eqref{eqlimit} are well respected---as a result of coordination.
+If we simply turn off the cooling supply, we find our system becomes infeasible.
+To resolve this, we multiplied the $\mathrm{P}^\mathrm{A}$ in \eqref{pAlimit} by 1.3, yielding the
+red ``q=0:p'' curve.
+It can be observed that electricity consumption increases in large amount at noon
+when the outdoor temperature reaches its peak.
+Therefore, besides gaining flexibility for the customers in terms of their energy supply options, 
+leveraging proper thermal resources can also help alleviate stress on the neighborhood's electric
+distribution infrastructure.
+
+
+\section{Conclusion}\label{section:six}
+In this paper, we proposed a decentralized coordination framework on the operation of
+distributed energy resources within a residential neighborhood.
+Social factor is considered between pairs of households, while direct thermal supply
+is also allowed besides electric air conditioning inside households.
+Based on the dual decomposition theory for large-scale MILP with block structures,
+an asynchronous cutting plane method is proposed, enabling us to conduct simulations
+that are faithful to real-world applications.
+The algorithm is shown to be highly efficient across varied problem settings in our
+computational experiments, producing provably high-quality optimized decisions in
+short time and thereby enabling full flexibility utilization at the residential demand side.
+Future work might consider the integration of other energy carriers
+and social activities in broader senses.
+
+\begin{thebibliography}{1}
+\bibliographystyle{IEEEtran}
+
+
+\bibitem{market2025}
+S. Mollaeivaneghi, R. Abolpour and F. Steinke, ``The Impact of Multi-Location Electricity Consumers' Flexibility on Distributed Energy Resources' Pricing Power,'' in \textit{IEEE Transactions on Energy Markets, Policy and Regulation}, vol. 3, no. 3, pp. 251-259, Sept. 2025.
+\bibitem{energymanagement2017}
+B. Celik, R. Roche, S. Suryanarayanan, D. Bouquain and A. Miraoui, ``Electric Energy Management in Residential Areas Through Coordination of Multiple Smart Homes,'' \textit{Renewable and Sustainable Energy Reviews}, vol. 80, pp. 260-275, 2017.
+\bibitem{smartHEMS2021}
+F. Etedadi Aliabadi, K. Agbossou, S. Kelouwani, N. Henao and S. S. Hosseini, ``Coordination of Smart Home Energy Management Systems in Neighborhood Areas: A Systematic Review,'' in \textit{IEEE Access}, vol. 9, pp. 36417-36443, 2021.
+\bibitem{integratedDR2023}
+M. A. Mirzaei, H. Mehrjerdi and A. M. Saatloo, ``Robust Strategic Behavior of a Large Multi-Energy Consumer in Electricity Market Considering Integrated Demand Response,'' in \textit{IEEE Systems Journal}, vol. 17, no. 4, pp. 6346-6356, Dec. 2023.
+\bibitem{cpss2022}
+Z. Chen, J. Zhu, H. Dong, W. Wu and H. Zhu, ``Optimal Dispatch of WT/PV/ES Combined Generation System Based on Cyber-Physical-Social Integration,'' in \textit{IEEE Transactions on Smart Grid}, vol. 13, no. 1, pp. 342-354, Jan. 2022.
+\bibitem{multicarrier2022}
+H. Mehrjerdi, R. Hemmati, S. Mahdavi, M. Shafie-Khah and J. P. S. Catalão, ``Multicarrier Microgrid Operation Model Using Stochastic Mixed Integer Linear Programming,'' in \textit{IEEE Transactions on Industrial Informatics}, vol. 18, no. 7, pp. 4674-4687, July 2022.
+\bibitem{HEMS2018}
+F. Y. Melhem, O. Grunder, Z. Hammoudan and N. Moubayed, ``Energy Management in Electrical Smart Grid Environment Using Robust Optimization Algorithm,'' in \textit{IEEE Transactions on Industry Applications}, vol. 54, no. 3, pp. 2714-2726, May-June 2018.
+\bibitem{integrated2023}
+M. H. Araghian, M. Rahimiyan and M. Zamen, ``Robust Integrated Energy Management of a Smart Home Considering Discomfort Degree-Day,'' in \textit{IEEE Transactions on Industrial Informatics}, vol. 19, no. 10, pp. 10133-10144, Oct. 2023.
+\bibitem{chenxin2021}
+X. Chen, Y. Li, J. Shimada and N. Li, ``Online Learning and Distributed Control for Residential Demand Response,'' in \textit{IEEE Transactions on Smart Grid}, vol. 12, no. 6, pp. 4843-4853, Nov. 2021.
+\bibitem{kim2013}
+S. -J. Kim and G. B. Giannakis, ``Scalable and Robust Demand Response With Mixed-Integer Constraints,'' in \textit{IEEE Transactions on Smart Grid}, vol. 4, no. 4, pp. 2089-2099, Dec. 2013.
+\bibitem{fast2016}
+S. Mhanna, A. C. Chapman and G. Verbič, ``A Fast Distributed Algorithm for Large-Scale Demand Response Aggregation,'' in \textit{IEEE Transactions on Smart Grid}, vol. 7, no. 4, pp. 2094-2107, July 2016.
+\bibitem{async2020}
+X. Zhou, E. Dall’Anese and L. Chen, ``Online Stochastic Optimization of Networked Distributed Energy Resources,'' in \textit{IEEE Transactions on Automatic Control}, vol. 65, no. 6, pp. 2387-2401, June 2020.
+\bibitem{heuristic2019}
+E. S. Parizy, H. R. Bahrami and S. Choi, ``A Low Complexity and Secure Demand Response Technique for Peak Load Reduction,'' in \textit{IEEE Transactions on Smart Grid}, vol. 10, no. 3, pp. 3259-3268, May 2019.
+\bibitem{orlm2016}
+A. Safdarian, M. Fotuhi-Firuzabad and M. Lehtonen, ``Optimal Residential Load Management in Smart Grids: A Decentralized Framework,'' in \textit{IEEE Transactions on Smart Grid}, vol. 7, no. 4, pp. 1836-1845, July 2016.
+\bibitem{neighborhood2021}
+B. Jeddi, Y. Mishra and G. Ledwich, ``Distributed Load Scheduling in Residential Neighborhoods for Coordinated Operation of Multiple Home Energy Management Systems,'' \textit{Applied Energy}, vol. 300, no. 117353, 2021.
+\bibitem{community2024}
+B. Mota, P. Faria and Z. Vale, ``Energy Cost Optimization Through Load Shifting in a Photovoltaic Energy-Sharing Household Community,'' \textit{Renewable Energy}, vol. 221, no. 119812, 2024.
+\bibitem{preference2024}
+J. Faraji, F. Vallée and Z. De Grève, ``A Preference-Informed Energy Sharing Framework for a Renewable Energy Community,'' in \textit{IEEE Transactions on Energy Markets, Policy and Regulation}, vol. 2, no. 4, pp. 503-518, Dec. 2024.
+\bibitem{dw2019}
+M. F. Anjos, A. Lodi and M. Tanneau, ``A Decentralized Framework for the Optimal Coordination of Distributed Energy Resources,'' in \textit{IEEE Transactions on Power Systems}, vol. 34, no. 1, pp. 349-359, Jan. 2019.
+\bibitem{wang2023}
+Q. Wang et al., ``Asynchronous Decomposition Method for the Coordinated Operation of Virtual Power Plants,'' in \textit{IEEE Transactions on Power Systems}, vol. 38, no. 1, pp. 767-782, Jan. 2023.
+\bibitem{wu2025}
+Y. Wu, T. Yu, Z. Pan and Z. Wang, ``Best Response Learning Assisted Asynchronous ADMM for Real-Time Energy Sharing Under Communication Delay,'' in \textit{IEEE Transactions on Smart Grid}, vol. 16, no. 4, pp. 3239-3255, July 2025.
+\bibitem{liu2024}
+B. Liu, C. Bissuel, F. Courtot, C. Gicquel and D. Quadri, ``A generalized Benders decomposition approach for the optimal design of a local multi-energy system,'' \textit{European Journal of Operational Research}, vol. 318, no. 1, pp. 43-54, 2024.
+\bibitem{benders}
+X. Blanchot, F. Clautiaux, B. Detienne, A. Froger, and M. Ruiz, ``The Benders by Batch Algorithm: Design and Stabilization of an Enhanced Algorithm to Solve Multicut Benders Reformulation of Two-Stage Stochastic Programs,'' \textit{European Journal of Operational Research}, vol. 309, no. 1, pp. 202-216, 2023.
+\bibitem{chenrui2024}
+R. Chen, O. Günlük and A. Lodi, ``Recovering Dantzig–Wolfe Bounds by Cutting Planes,'' \textit{Operations Research}, vol. 73, no. 2, pp. 1128-1142, 2024.
+\bibitem{nlp2016}
+D. P. Bertsekas, ``Nonlinear Programming'', 3rd ed. Belmont, MA, USA: Athena Scientific, 2016.
+\bibitem{github2025}
+Z. Chen, ``CEMS,'' GitHub repository. Accessed: Nov. 2025. [Online]. Available: \url{https://github.com/zchenytt/CEMS/tree/main/src/async}
+\bibitem{jump}
+M. Lubin, O. Dowson, J.Garcia, J.Huchette, B. Legat and J. Vielma, ``JuMP 1.0: Recent Improvements to a Modeling Language for Mathematical Optimization'', \textit{Mathematical Programming Computation}, vol. 15, pp. 581-589, 2023.
+\bibitem{makie}
+S. Danisch and J. Krumbiegel, ``Makie.jl: Flexible high-performance data visualization for Julia'', \textit{Journal of Open Source Software}, vol. 6, no. 65, p. 3349, 2021.
+\bibitem{forumproof}
+Convex hull of a Cartesian product. Accessed: May. 2026. [Online]. Available: \url{https://forem.julialang.org/waltermadelim/convex-hull-of-a-cartesian-product-358i}
+\bibitem{ip2014}
+M. Conforti, G. Cornuéjols, and G. Zambelli, ``Integer Programming''. Cham, Switzerland: Springer, 2014.
+
+\end{thebibliography}
+\end{document}
