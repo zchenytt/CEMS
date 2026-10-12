@@ -186,3 +186,37 @@ myplot(axje, st, du)
 fig
 
 save("duty.pdf", fig)
+
+
+
+
+
+
+
+using CairoMakie
+Makie.update_theme!(
+    fonts = (
+        regular = "Times New Roman",
+        bold = "Times New Roman Bold",
+        italic = "Times New Roman Italic",
+        bold_italic = "Times New Roman Bold Italic",
+    )
+)
+richs(s) = rich(s, font="SimSun")
+
+(C, nov, nv) = ([12, 11, 11, 12, 14, 18, 24, 26, 22, 18, 15, 14, 13, 14, 18, 24, 30, 34, 32, 28, 22, 18, 15, 13], [11200.59152740307, 11178.949941294199, 11179.499176329959, 11118.243378969491, 11283.616553493574, 11330.514131774597, 5828.68067694422, 6969.248605658914, 11150.897380519556, 11022.042422480066, 11021.784066179373, 11010.825290532905, 10979.917045748507, 11041.35119047619, 11057.78107795861, 10468.045357032732, 7338.311777212216, 3599.423740604351, 3349.7255543850574, 5598.561833190089, 9551.046037503538, 10028.290804764676, 11204.19424280546, 11124.008899078033], [11209.559200356718, 11188.20497002439, 11235.041725029769, 11175.264612575284, 11294.914145139066, 11394.264339814936, 7477.443681444859, 5727.269951969445, 11110.253110128966, 11062.37324849869, 11038.794393285403, 11054.232877426502, 11040.741012690654, 11059.970238095244, 11076.884308786413, 11077.841526520468, 6673.604245498412, 3078.9171765192864, 2745.849406538169, 4521.734902403658, 10045.414974032501, 10559.408001790474, 11162.122755892493, 11125.477702918579])
+int2price(pint) = 0.3 + (pint - 11) * (0.9 - 0.3) / (34 - 11) # int to price in yuan/kWh
+
+T = 24
+f = Figure(size = (500, 320); figure_padding=0.9);
+ax = Axis(f[1,1]; xlabel = rich("时段/", rich("h", font="Times New Roman"), font="SimSun"), ylabel = rich("合计电功率/", rich("MW", font="Times New Roman"), font="SimSun"), xgridvisible = false, ygridvisible = false, backgroundcolor = :transparent);
+ax2 = Axis(f[1,1]; yticklabelcolor = :blue, yaxisposition = :right, ylabel = rich("电价/（元/", rich("kWh", font="Times New Roman"), ")", font="SimSun"), xgridvisible = false, ygridvisible = false, backgroundcolor = :transparent);
+stairs!(ax2, 1:T, int2price.(C);linestyle = :dot, label = richs("电价"), color = :blue);
+stairs!(ax, 1:T, 1e-3 * 0.75 * nv;  color = :seagreen, label = richs("基准"));
+stairs!(ax, 1:T, 1e-3 * 0.75 * nov; linestyle = :dash, color = :tomato, label = richs("无EV借电"));
+hidespines!(ax2)
+hidexdecorations!(ax2)
+axislegend(ax; position = :lc)
+axislegend(ax2; position = :rc)
+f
+save("noevlent.svg", f)
