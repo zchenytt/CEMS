@@ -220,3 +220,37 @@ axislegend(ax; position = :lc)
 axislegend(ax2; position = :rc)
 f
 save("noevlent.svg", f)
+
+
+
+using CairoMakie
+Makie.update_theme!(
+    fonts = (
+        regular = "Times New Roman",
+        bold = "Times New Roman Bold",
+        italic = "Times New Roman Italic",
+        bold_italic = "Times New Roman Bold Italic",
+    )
+)
+richs(s) = rich(s, font="SimSun")
+(T, O, C, jvqA, nv, nov) = (24, [29, 28, 28, 28, 29, 31, 33, 35, 37, 39, 40, 41, 42, 42, 41, 40, 38, 36, 34, 33, 32, 31, 30, 29], [12, 11, 11, 12, 14, 18, 24, 26, 22, 18, 15, 14, 13, 14, 18, 24, 30, 34, 32, 28, 22, 18, 15, 13], [207.49250441676946, 207.131474750044, 179.48651193865194, 199.51820754813423, 203.67101832671764, 256.72722781586765, 3433.789858302893, 6329.887529237663, 2462.658124260886, 4793.875569498873, 5933.399926116215, 6959.413390852869, 8465.490691574709, 8340.273842613475, 7144.0981485031625, 8290.880606120318, 9997.35447951778, 9999.999999999998, 10000.0, 5550.847818559557, 250.10305547524737, 286.0162092903608, 248.85634799438273, 258.02745728536], [13483.999999999995, 13484.000000000002, 13484.000000000002, 13484.000000000002, 13483.999999999998, 13483.999999999998, 7432.309600491882, 7806.946244337553, 13483.999999999989, 13484.00000000001, 13484.0, 13483.999999999996, 13483.999999999998, 13484.000000000004, 13484.0, 12131.631313910364, 7663.241091975598, 3693.335090975096, 3381.897809184526, 6187.373073373457, 12132.258796144524, 12514.494133775173, 13483.999999999985, 13484.000000000005], [14046.444924776415, 14484.100212692481, 14737.54712740297, 14262.111025552791, 14216.800212302473, 14218.440992814518, 11902.32270563922, 13699.864092569642, 15569.49655954297, 16039.07102453023, 16163.432325981812, 16161.645660748074, 16191.193640736854, 16195.673410939631, 16082.16485700931, 15486.294274343347, 13386.454189108686, 9463.172259641096, 9587.07864446115, 10857.82167258168, 12242.604752585457, 12591.951392332467, 12779.395358521491, 13166.541467016605])
+int2price(pint) = 0.3 + (pint - 11) * (0.9 - 0.3) / (34 - 11) # int to price in yuan/kWh
+f = Figure(size = (600, 500); figure_padding=0.9);
+ax = Axis(f[1,1]; ylabel = rich("合计电功率/", rich("MW", font="Times New Roman"), font="SimSun"), title = rich("(a) ", richs("合计供电、供冷功率在基准与无供冷两种条件下的时序调度结果"), font = "Times New Roman"), xgridvisible = false, ygridvisible = false);
+ax4 = Axis(f[1,1]; ylabel = rich("合计冷功率/", rich("MW", font="Times New Roman"), font="SimSun"), yticklabelcolor = :blue, yaxisposition = :right, xgridvisible = false, ygridvisible = false);
+ax2 = Axis(f[2,1]; xlabel = rich("时段/", rich("h", font="Times New Roman"), font="SimSun"), ylabel = richs("温度/℃"), title = rich("(b) ", richs("环境条件：室外温度和电价"), font = "Times New Roman"), xgridvisible = false, ygridvisible = false)
+ax3 = Axis(f[2,1]; yticklabelcolor = :blue, yaxisposition = :right, ylabel = rich("电价/（元/", rich("kWh", font="Times New Roman"), ")", font="SimSun"), xgridvisible = false, ygridvisible = false)
+stairs!(ax2, 1:T, O; label = richs("室外温度"), color = :tomato);
+stairs!(ax3, 1:T, int2price.(C); label = richs("电价"), color = :blue, linestyle = :dot);
+stairs!(ax4, 1:T, 1e-3 * 0.75 * jvqA; label = richs("基准：冷"), color = :blue, linestyle = :dash)
+stairs!(ax, 1:T, 1e-3 * 0.75 * nv; color = :seagreen, label = richs("基准：电"));
+stairs!(ax, 1:T, 1e-3 * 0.75 * nov; color = :tomato, label = richs("无供冷：电"), linestyle = :dot);
+hidespines!(ax3)
+hidexdecorations!(ax3)
+hidespines!(ax4)
+hidexdecorations!(ax4)
+axislegend(ax4; position = :rc)
+axislegend(ax; position = :lc)
+axislegend(ax2; position = :lt)
+axislegend(ax3; position = :rt)
+save("nocooling.svg", f)
